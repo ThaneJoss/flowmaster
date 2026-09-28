@@ -1,14 +1,50 @@
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "flowmaster",
+  "account_id": "aaea7b9b047d7d835d3b8e4a2ce93bc7",
   "main": "dist/server/index.js",
   "compatibility_date": "2026-05-15",
-  "compatibility_flags": ["nodejs_compat"],
+  "routes": [
+    {
+      "pattern": "flow.thanejoss.com",
+      "custom_domain": true
+    }
+  ],
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
   "no_bundle": true,
   "find_additional_modules": true,
-  "rules": [{"type":"ESModule","globs":["**/*.js","**/*.mjs"],"fallthrough":true}],
-  "assets": {"directory":"dist/client","binding":"ASSETS","run_worker_first":["/api/*"]},
-  "d1_databases": [{"binding":"DB","database_name":"flowmaster-db","database_id":"00000000-0000-4000-8000-000000000000","migrations_dir":"drizzle"}],
-  "vars": {"ALLOWED_ORIGINS":"","MODEL_ALLOWED_HOSTS":""},
-  "observability": {"enabled":true}
+  "rules": [
+    {
+      "type": "ESModule",
+      "globs": [
+        "**/*.js",
+        "**/*.mjs"
+      ],
+      "fallthrough": true
+    }
+  ],
+  "assets": {
+    "directory": "dist/client",
+    "binding": "ASSETS",
+    "run_worker_first": [
+      "/api/*"
+    ]
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "flowmaster-db",
+      "database_id": "8f859c98-c0a8-4822-9588-514b55c7a980",
+      "migrations_dir": "drizzle"
+    }
+  ],
+  "vars": {
+    "ALLOWED_ORIGINS": "",
+    "MODEL_ALLOWED_HOSTS": ""
+  },
+  "observability": {
+    "enabled": true
+  }
 }

@@ -9,7 +9,7 @@ const SITE_CREATOR_PLACEHOLDER_DATABASE_ID =
   "00000000-0000-4000-8000-000000000000";
 
 const { d1, r2 } = hostingConfig;
-// Keep local D1 identity aligned with the self-hosted Wrangler configuration.
+// Keep local bindings and generated deploy settings aligned with production.
 const deploymentConfig = JSON.parse(readFileSync(new URL("./wrangler.deploy.jsonc", import.meta.url), "utf8"));
 
 // macOS Seatbelt blocks FSEvents, so Codex previews need polling for HMR.
@@ -19,6 +19,10 @@ const managedLinux = readExecutionProfile() === "managed-linux";
 const localBindingConfig = {
   main: "vinext/server/fetch-handler",
   name: deploymentConfig.name,
+  account_id: deploymentConfig.account_id,
+  compatibility_date: deploymentConfig.compatibility_date,
+  routes: deploymentConfig.routes,
+  observability: deploymentConfig.observability,
   vars: deploymentConfig.vars,
   compatibility_flags: ["nodejs_compat"],
   d1_databases: d1

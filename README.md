@@ -30,6 +30,18 @@ React 19 + TypeScript + Vinext/Vite、Shadcn/Radix UI、Cloudflare Workers、D1�
 
 此项目使用 **Workers** 部署完整前后端，不是只上传静态文件的 Pages 项目。
 
+### 当前生产配置
+
+- 访问地址：[https://flow.thanejoss.com](https://flow.thanejoss.com)
+- Worker：`flowmaster`
+- D1：`flowmaster-db`，绑定名 `DB`，配置中已填写生产数据库 ID。
+- 前端与 API 共用上述域名，`ALLOWED_ORIGINS` 留空即可；工作区连接中的服务地址也留空。
+- 管理员 Token 和模型加密密钥通过 Cloudflare Secrets 设置，不写入仓库。
+
+Cloudflare Git 构建参数应设置为：`main` 分支、仓库根目录、构建命令 `pnpm build` 和部署命令 `pnpm run deploy`。部署脚本显式使用 `wrangler.deploy.jsonc`；自定义域名由该文件的 `routes` 管理。Vite 生成的部署配置也会保留账号、域名与数据库绑定。更新已有部署时复用数据库与 Secrets，不要重复创建或更换密钥。
+
+以下初始化步骤供首次部署到其他账号时使用；更换账号时需同步修改 `account_id`、数据库 ID 和自定义域名。
+
 ### 1. 安装依赖
 
 建议使用 Node.js 24。安装项目指定的 pnpm 版本：
@@ -62,7 +74,7 @@ pnpm db:migrate:remote
 ```bash
 pnpm build
 pnpm deploy:check
-pnpm deploy
+pnpm run deploy
 ```
 
 首次发布时，未设置管理员 Token 的 API 会返回 503，研究数据不会公开。
@@ -88,11 +100,11 @@ pnpm exec wrangler secret put ENCRYPTION_KEY --config wrangler.deploy.jsonc
 - `ALLOWED_ORIGINS`：前端与 API 在同一个域名时留空。分开部署时，在配置的 `vars` 中填写允许的**精确 Origin**，多个使用逗号分隔，例如 `https://research.example.com,https://dev.example.com`；不能使用 `*`。
 - `MODEL_ALLOWED_HOSTS`：可选的模型服务域名白名单，使用逗号分隔。留空时，管理员可配置公共 HTTPS 域名。
 
-设置 Secrets 后无需重新构建前端。修改 `vars` 后需执行 `pnpm deploy`。
+设置 Secrets 后无需重新构建前端。修改 `vars` 后需执行 `pnpm run deploy`。
 
 ### 5. 连接工作区
 
-1. 打开 Wrangler 返回的站点 URL。
+1. 打开 [https://flow.thanejoss.com](https://flow.thanejoss.com)（自行部署到其他账号时使用对应站点 URL）。
 2. 进入 **系统设置 → 工作区连接**。
 3. 服务地址留空，输入 `ADMIN_TOKEN`，点击“连接工作区”。
 4. 如需截图中的示例，点击“导入示例研究”。此操作仅对空工作区可用。
@@ -123,7 +135,7 @@ pnpm test:worker
 
 ## API 使用
 
-基础路径：`https://你的站点/api/v1`
+基础路径：`https://flow.thanejoss.com/api/v1`
 
 所有业务请求携带：
 
@@ -145,7 +157,7 @@ Content-Type: application/json
 ### 查询假设
 
 ```bash
-export FLOWMASTER_URL="https://你的站点"
+export FLOWMASTER_URL="https://flow.thanejoss.com"
 # 在自己的终端设置 FLOWMASTER_TOKEN，请勿提交到代码仓库
 curl "$FLOWMASTER_URL/api/v1/hypotheses?limit=50&offset=0" \
   -H "Authorization: Bearer $FLOWMASTER_TOKEN"
