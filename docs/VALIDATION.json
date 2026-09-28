@@ -1,0 +1,14 @@
+{
+  "typescript": "passed",
+  "production_build": "passed",
+  "api_tests": {
+    "passed": 12,
+    "failed": 0
+  },
+  "compiled_worker_smoke": "passed",
+  "wrangler_dry_run": "passed",
+  "browser_qa": "unavailable: supervised preview service is not running",
+  "live_model_provider": "not tested without user credentials",
+  "deployment": "source published to GitHub; user configures their Cloudflare account",
+  "visual_reference": "ThaneJoss/webapps @ 63f5342b503f25f0dffce2abbbe6ceb4737dc2e0"
+}
