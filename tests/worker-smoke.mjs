@@ -12,7 +12,7 @@ const mf=new Miniflare({name:'flowmaster-smoke',modules,modulesRoot:serverRoot,c
 try{
  const db=await mf.getD1Database('DB');
  for(const file of readdirSync('drizzle').filter(n=>n.endsWith('.sql')).sort())for(const sql of readFileSync(`drizzle/${file}`,'utf8').split('--> statement-breakpoint').map(s=>s.trim()).filter(Boolean))await db.prepare(sql).run();
- const page=await mf.dispatchFetch('https://flowmaster.example/');assert.equal(page.status,200);const html=await page.text();assert.ok(html.includes('FlowMaster'));assert.ok(html.includes('假设列表'));assert.ok(!html.includes('Your site is taking shape'));
+ const page=await mf.dispatchFetch('https://flowmaster.example/');assert.equal(page.status,200);const html=await page.text();assert.ok(html.includes('FlowMaster'));assert.ok(html.includes('假设列表'));assert.ok(html.includes('工作区为空'));assert.ok(html.includes('管理员登录'));assert.ok(!html.includes('演示工作区'));assert.ok(!html.includes('局部判别信息未传递到 CLS 假设'));assert.ok(!html.includes(admin));assert.ok(!html.includes('Your site is taking shape'));
  const asset=await mf.dispatchFetch('https://flowmaster.example/favicon.svg');assert.equal(asset.status,200);assert.ok((await asset.text()).includes('#2563eb'));
  const unauthorized=await mf.dispatchFetch('https://flowmaster.example/api/v1/workspace');assert.equal(unauthorized.status,401);
  const workspace=await mf.dispatchFetch('https://flowmaster.example/api/v1/workspace',{headers:{Authorization:`Bearer ${admin}`}});assert.equal(workspace.status,200);const data=await workspace.json();assert.deepEqual(data.data,{projects:[],hypotheses:[],experiments:[],resources:[]});

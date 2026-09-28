@@ -6,9 +6,26 @@
     "failed": 0
   },
   "compiled_worker_smoke": "passed",
-  "wrangler_dry_run": "passed",
-  "browser_qa": "unavailable: supervised preview service is not running",
+  "wrangler_dry_run": "passed previously; not rerun for this frontend-only change",
+  "browser_qa": {
+    "runtime": "Chromium with compiled local Worker and isolated D1",
+    "status": "passed",
+    "viewport_widths": [320, 390, 700, 768, 1024, 1280, 1440, 1920],
+    "page_errors": 0,
+    "coverage": [
+      "empty initial workspace and all navigation pages",
+      "authentication required before editing; invalid Token stays signed out",
+      "create and persist project and hypothesis",
+      "session restore and remembered login in a new tab",
+      "logout clears visible data and browser credentials, retaining database records",
+      "sample data requires explicit import",
+      "sidebar scrolling, minimap icon sizes and canvas controls",
+      "mobile sidebar and node details",
+      "expired saved credential leaves an empty workspace"
+    ]
+  },
+  "changed_components_eslint": "9 pre-existing errors; no new errors compared with the original components",
   "live_model_provider": "not tested without user credentials",
-  "deployment": "source published to GitHub; user configures their Cloudflare account",
+  "deployment": "layout and empty-workspace changes validated locally; not yet published",
   "visual_reference": "ThaneJoss/webapps @ 63f5342b503f25f0dffce2abbbe6ceb4737dc2e0"
 }
