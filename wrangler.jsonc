@@ -3,6 +3,9 @@
   "name": "flowmaster",
   "account_id": "aaea7b9b047d7d835d3b8e4a2ce93bc7",
   "main": "dist/server/index.js",
+  "build": {
+    "command": "pnpm build"
+  },
   "compatibility_date": "2026-05-15",
   "routes": [
     {

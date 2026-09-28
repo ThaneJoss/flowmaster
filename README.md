@@ -41,6 +41,8 @@ React 19 + TypeScript + Vinext/Vite、Shadcn/Radix UI、Cloudflare Workers、D1�
 
 Cloudflare Git 构建参数应设置为：`main` 分支、仓库根目录、构建命令 `pnpm build` 和部署命令 `npx wrangler deploy`（也可使用 `pnpm run deploy`）。根目录的 `wrangler.jsonc` 是唯一的部署配置来源；Vite 直接读取它，生成的部署配置保留账号、域名、D1、`ASSETS` 绑定与 `/api/*` 优先进入 Worker 的规则。更新已有部署时复用数据库与 Secrets，不要重复创建或更换密钥。
 
+`dist/` 是构建产物，不提交到 Git。如果日志在依赖安装完成后直接执行 `npx wrangler deploy`，并报 `dist/server/index.js` 不存在，说明部署前尚未生成产物。根配置的 `build.command` 会让 Wrangler 先运行 `pnpm build`；已经显式构建时，默认部署命令读取 Vite 生成的配置，不重复构建。Cloudflare 控制台的构建命令仍建议明确填写为 `pnpm build`。
+
 以下初始化步骤供首次部署到其他账号时使用；更换账号时需同步修改 `account_id`、数据库 ID 和自定义域名。
 
 ### 1. 安装依赖
