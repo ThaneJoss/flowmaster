@@ -36,6 +36,7 @@ React 19 + TypeScript + Vinext/Vite、Shadcn/Radix UI、Cloudflare Workers、D1�
 - Worker：`flowmaster`
 - D1：`flowmaster-db`，绑定名 `DB`，配置中已填写生产数据库 ID。
 - 前端与 API 共用上述域名，`ALLOWED_ORIGINS` 留空即可；工作区连接中的服务地址也留空。
+- 界面时间统一显示为北京时间（`Asia/Shanghai`），保证 Cloudflare 服务端与浏览器首次渲染一致。
 - 管理员 Token 和模型加密密钥通过 Cloudflare Secrets 设置，不写入仓库。
 
 Cloudflare Git 构建参数应设置为：`main` 分支、仓库根目录、构建命令 `pnpm build` 和部署命令 `pnpm run deploy`。部署脚本显式使用 `wrangler.deploy.jsonc`；自定义域名由该文件的 `routes` 管理。Vite 生成的部署配置也会保留账号、域名与数据库绑定。更新已有部署时复用数据库与 Secrets，不要重复创建或更换密钥。
@@ -227,7 +228,9 @@ tests/                    API 集成与编译后 Worker 测试
 
 交付时已执行 TypeScript 检查、生产构建、D1 API 集成测试以及编译后 Worker 冒烟测试。模型请求通过模拟服务验证请求格式、鉴权和返回处理，**未使用你的实际服务商 Key 做真实调用**。
 
-当前执行环境无法启动浏览器预览，因此未完成浏览器端点击与视觉验收；部署后请重点检查自己的浏览器和屏幕尺寸。WebMCP 在支持的浏览器中暴露“读取假设”和“打开假设”工具；该实验性功能未做真实浏览器验证。
+生产域名已通过 HTTPS 页面与静态资源、API 鉴权和 D1 读取检查。桌面 Chromium 已验证系统设置导航、管理员连接工作区、读取 Token 列表与断开连接，并检查 UTC 和北京时间环境中的首次渲染。移动端视觉与 WebMCP 尚未验收；WebMCP 在支持的浏览器中暴露“读取假设”和“打开假设”工具。
+
+全仓 ESLint 仍有 31 个既有错误，主要涉及 React Hooks 和 `any` 类型；本次修改文件的 ESLint 检查通过。
 
 资源管理保存链接与元数据，不包含文件上传。Agent 生成研究建议，不托管 Python、GPU 训练或任意脚本；这些任务可在你自己的环境执行，再通过 API 回传结果。
 
