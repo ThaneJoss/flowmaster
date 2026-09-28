@@ -1,49 +1,11 @@
 import vinext from "vinext";
-import { readFileSync } from "node:fs";
 import { defineConfig } from "vite";
-import hostingConfig from "./.openai/hosting.json";
 import { readExecutionProfile } from "./scripts/execution-profile.mjs";
 import { sites } from "./build/sites-vite-plugin";
-
-const SITE_CREATOR_PLACEHOLDER_DATABASE_ID =
-  "00000000-0000-4000-8000-000000000000";
-
-const { d1, r2 } = hostingConfig;
-// Keep local bindings and generated deploy settings aligned with production.
-const deploymentConfig = JSON.parse(readFileSync(new URL("./wrangler.deploy.jsonc", import.meta.url), "utf8"));
 
 // macOS Seatbelt blocks FSEvents, so Codex previews need polling for HMR.
 const isCodexSeatbeltSandbox = process.env.CODEX_SANDBOX === "seatbelt";
 const managedLinux = readExecutionProfile() === "managed-linux";
-
-const localBindingConfig = {
-  main: "vinext/server/fetch-handler",
-  name: deploymentConfig.name,
-  account_id: deploymentConfig.account_id,
-  compatibility_date: deploymentConfig.compatibility_date,
-  routes: deploymentConfig.routes,
-  observability: deploymentConfig.observability,
-  vars: deploymentConfig.vars,
-  compatibility_flags: ["nodejs_compat"],
-  d1_databases: d1
-    ? [
-        {
-          binding: d1,
-          database_name: deploymentConfig.d1_databases[0].database_name,
-          database_id: deploymentConfig.d1_databases[0].database_id || SITE_CREATOR_PLACEHOLDER_DATABASE_ID,
-          migrations_dir: "drizzle",
-        },
-      ]
-    : [],
-  r2_buckets: r2
-    ? [
-        {
-          binding: r2,
-          bucket_name: "site-creator-r2",
-        },
-      ]
-    : [],
-};
 
 export default defineConfig(async () => {
   // Use Miniflare's local Request.cf placeholder unless fetching is requested.
@@ -71,7 +33,9 @@ export default defineConfig(async () => {
       cloudflare({
         viteEnvironment: { name: "rsc", childEnvironments: ["ssr"] },
         inspectorPort: false,
-        config: localBindingConfig,
+        configPath: "wrangler.jsonc",
+        // Vite builds the source entry; every deployment setting comes from Wrangler.
+        config: { main: "vinext/server/fetch-handler" },
       }),
     ],
   };

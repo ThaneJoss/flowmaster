@@ -39,7 +39,7 @@ React 19 + TypeScript + Vinext/Vite、Shadcn/Radix UI、Cloudflare Workers、D1�
 - 界面时间统一显示为北京时间（`Asia/Shanghai`），保证 Cloudflare 服务端与浏览器首次渲染一致。
 - 管理员 Token 和模型加密密钥通过 Cloudflare Secrets 设置，不写入仓库。
 
-Cloudflare Git 构建参数应设置为：`main` 分支、仓库根目录、构建命令 `pnpm build` 和部署命令 `pnpm run deploy`。部署脚本显式使用 `wrangler.deploy.jsonc`；自定义域名由该文件的 `routes` 管理。Vite 生成的部署配置也会保留账号、域名与数据库绑定。更新已有部署时复用数据库与 Secrets，不要重复创建或更换密钥。
+Cloudflare Git 构建参数应设置为：`main` 分支、仓库根目录、构建命令 `pnpm build` 和部署命令 `npx wrangler deploy`（也可使用 `pnpm run deploy`）。根目录的 `wrangler.jsonc` 是唯一的部署配置来源；Vite 直接读取它，生成的部署配置保留账号、域名、D1、`ASSETS` 绑定与 `/api/*` 优先进入 Worker 的规则。更新已有部署时复用数据库与 Secrets，不要重复创建或更换密钥。
 
 以下初始化步骤供首次部署到其他账号时使用；更换账号时需同步修改 `account_id`、数据库 ID 和自定义域名。
 
@@ -58,7 +58,7 @@ pnpm test
 
 ```bash
 pnpm exec wrangler login
-pnpm exec wrangler d1 create flowmaster-db --config wrangler.deploy.jsonc
+pnpm exec wrangler d1 create flowmaster-db --config wrangler.jsonc
 ```
 
 将上一步返回的 `database_id` 填入配置：
@@ -68,7 +68,7 @@ node scripts/configure-cloudflare.mjs YOUR_D1_DATABASE_UUID
 pnpm db:migrate:remote
 ```
 
-`wrangler.deploy.jsonc` 中的 `name` 默认是 `flowmaster`。如果修改数据库名称，请同时修改配置中的 `database_name`。数据库 ID 是资源标识，不是访问凭据。
+`wrangler.jsonc` 中的 `name` 默认是 `flowmaster`。如果修改数据库名称，请同时修改配置中的 `database_name`。数据库 ID 是资源标识，不是访问凭据。
 
 ### 3. 构建并部署
 
@@ -89,11 +89,11 @@ openssl rand -hex 32
 openssl rand -hex 32
 ```
 
-分别通过交互式输入保存，不要把真实值写进源码或 `wrangler.deploy.jsonc`：
+分别通过交互式输入保存，不要把真实值写进源码或 `wrangler.jsonc`：
 
 ```bash
-pnpm exec wrangler secret put ADMIN_TOKEN --config wrangler.deploy.jsonc
-pnpm exec wrangler secret put ENCRYPTION_KEY --config wrangler.deploy.jsonc
+pnpm exec wrangler secret put ADMIN_TOKEN --config wrangler.jsonc
+pnpm exec wrangler secret put ENCRYPTION_KEY --config wrangler.jsonc
 ```
 
 - `ADMIN_TOKEN`：初始管理员凭据。请自行保存在密码管理器中；首次连接前端时需要使用它。
@@ -218,7 +218,7 @@ lib/types.ts              前后端共享数据类型
 db/schema.ts              D1 数据库结构
 drizzle/                  数据库迁移
 public/openapi.json       API 规范
-wrangler.deploy.jsonc     自有 Cloudflare 部署配置
+wrangler.jsonc            自有 Cloudflare 部署配置
 tests/                    API 集成与编译后 Worker 测试
 ```
 
