@@ -11,7 +11,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { type Collection, type Experiment, type FlowNode, type Hypothesis, type Status, type Workspace, emptyNode, nodeTypeLabel, resourceLabel, uid } from "@/lib/types";
-import { type Connection, makeClient } from "@/lib/client";
+import { type ApiClient, type Connection, isRequestCancelled, makeClient } from "@/lib/client";
 import { Badge, Choice, Empty, Field, StatusIcon, downloadJson, formatDate, statuses } from "./fm-ui";
 import FlowCanvas from "./flow-canvas";
 import SettingsView from "./settings-view";
@@ -21,10 +21,20 @@ type Modal = {
     type: "hypothesis" | "project" | "node" | "experiment" | "resource" | "log";
     item?: any;
 };
+interface WorkspaceSession {
+    connection: Connection;
+    controller: AbortController;
+    api: ApiClient;
+}
+function createSession(connection: Connection): WorkspaceSession {
+    const controller = new AbortController();
+    return { connection, controller, api: makeClient(connection, controller.signal) };
+}
 export default function FlowMaster() {
     const [data, setData] = useState<Workspace>(blank);
-    const [connection, setConnection] = useState<Connection | null>(null);
-    const restoreRequest = useRef<AbortController | null>(null);
+    const [session, setSession] = useState<WorkspaceSession | null>(null);
+    const connection = session?.connection || null;
+    const pendingConnection = useRef<WorkspaceSession | null>(null);
     const [tab, setTab] = useState("hypotheses");
     const [query, setQuery] = useState("");
     const [statusFilter, setStatusFilter] = useState("all");
@@ -43,7 +53,8 @@ export default function FlowMaster() {
     const [running, setRunning] = useState(false);
     const [settingsTab, setSettingsTab] = useState("connection");
     const [mobile, setMobile] = useState(false);
-    const api = useMemo(() => makeClient(connection || { baseUrl: "", token: "", remember: false }), [connection]);
+    const api = useMemo(() => session?.api || makeClient({ baseUrl: "", token: "", remember: false }), [session]);
+    useEffect(() => () => session?.controller.abort(), [session]);
     const hypothesis = data.hypotheses.find(h => h.id === selected);
     const node = hypothesis?.nodes.find(n => n.id === selectedNode);
     const project = data.projects.find(p => p.id === hypothesis?.projectId);
@@ -70,9 +81,17 @@ export default function FlowMaster() {
     }, []);
     const load = async (client = api) => { const result = await client<Workspace>("/workspace"); setData(result); return result; };
     const connect = async (c: Connection) => {
-        restoreRequest.current?.abort();
-        const result = await makeClient(c)<Workspace>("/workspace");
-        setConnection(c);
+        pendingConnection.current?.controller.abort();
+        const candidate = createSession(c);
+        pendingConnection.current = candidate;
+        let result: Workspace;
+        try {
+            result = await candidate.api<Workspace>("/workspace");
+        } finally {
+            if (pendingConnection.current === candidate) pendingConnection.current = null;
+        }
+        session?.controller.abort();
+        setSession(candidate);
         setData(result);
         setExpanded([]);
         setSelectedNode("");
@@ -94,30 +113,33 @@ export default function FlowMaster() {
         const update = () => { setMobile(media.matches); if (media.matches) setDetails(false); };
         update();
         media.addEventListener("change", update);
-        const controller = new AbortController();
-        restoreRequest.current = controller;
+        let restored: WorkspaceSession | null = null;
         try {
             const saved = sessionStorage.getItem("flowmaster.connection") || localStorage.getItem("flowmaster.connection");
             if (saved) {
                 const c: Connection = JSON.parse(saved);
-                makeClient(c)<Workspace>("/workspace", {
-                    signal: AbortSignal.any([controller.signal, AbortSignal.timeout(60000)]),
-                }).then(d => {
-                    if (controller.signal.aborted) return;
-                    setConnection(c);
+                const candidate = createSession(c);
+                restored = candidate;
+                pendingConnection.current = candidate;
+                candidate.api<Workspace>("/workspace").then(d => {
+                    setSession(candidate);
                     setData(d);
                     if (d.hypotheses[0]) changeSelection(d.hypotheses[0]);
                     else setSelected("");
                 }).catch(() => {
-                    if (!controller.signal.aborted) toast.error("无法恢复登录，请检查网络或重新登录");
+                    if (!candidate.controller.signal.aborted) toast.error("无法恢复登录，请检查网络或重新登录");
+                }).finally(() => {
+                    if (pendingConnection.current === candidate) pendingConnection.current = null;
                 });
             }
         } catch { }
-        return () => { media.removeEventListener("change", update); controller.abort(); };
+        return () => { media.removeEventListener("change", update); restored?.controller.abort(); pendingConnection.current?.controller.abort(); };
     }, [changeSelection]);
     const disconnect = () => {
-        restoreRequest.current?.abort();
-        setConnection(null);
+        pendingConnection.current?.controller.abort();
+        pendingConnection.current = null;
+        session?.controller.abort();
+        setSession(null);
         setData(blank);
         setSelected("");
         setSelectedNode("");
@@ -140,7 +162,7 @@ export default function FlowMaster() {
         return saved;
     }
     catch (e) {
-        toast.error((e as Error).message);
+        if (!isRequestCancelled(e)) toast.error((e as Error).message);
         throw e;
     } };
     const remove = async (kind: Collection, id: string) => { await api(`/${kind}/${id}`, { method: "DELETE" }); setData(d => ({ ...d, [kind]: (d[kind] as any[]).filter(i => i.id !== id), ...(kind === "hypotheses" ? { experiments: d.experiments.filter(i => i.hypothesisId !== id) } : {}) })); toast.success("已删除"); };
@@ -164,7 +186,7 @@ export default function FlowMaster() {
         toast.success("Agent 分析已保存至实验记录");
     }
     catch (e) {
-        toast.error((e as Error).message);
+        if (!isRequestCancelled(e)) toast.error((e as Error).message);
     }
     finally {
         setRunning(false);
@@ -217,7 +239,7 @@ export default function FlowMaster() {
             setModal(null);
         }
         catch (err) {
-            toast.error((err as Error).message);
+            if (!isRequestCancelled(err)) toast.error((err as Error).message);
         }
         finally {
             setBusy(false);
@@ -270,7 +292,7 @@ export default function FlowMaster() {
         setConfirm(null);
     }
     catch (err) {
-        toast.error((err as Error).message);
+        if (!isRequestCancelled(err)) toast.error((err as Error).message);
     }
     finally {
         setBusy(false);

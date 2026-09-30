@@ -7,7 +7,7 @@ import { Switch } from "@/components/ui/switch";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter, AlertDialogAction, AlertDialogCancel } from "@/components/ui/alert-dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { type ApiClient, type Connection } from "@/lib/client";
+import { type ApiClient, type Connection, isRequestCancelled } from "@/lib/client";
 import { Choice, Empty, Field, formatDate } from "./fm-ui";
 interface AccessToken {
     id: string;
@@ -78,7 +78,7 @@ export default function SettingsView({ api, connection, onConnect, onDisconnect,
         setToken("");
     }
     catch (e) {
-        toast.error((e as Error).message);
+        if (!isRequestCancelled(e)) toast.error((e as Error).message);
     }
     finally {
         setBusy(false);
@@ -86,7 +86,7 @@ export default function SettingsView({ api, connection, onConnect, onDisconnect,
         await onSeed();
     }
     catch (e) {
-        toast.error((e as Error).message);
+        if (!isRequestCancelled(e)) toast.error((e as Error).message);
     }
     finally {
         setBusy(false);
@@ -99,7 +99,7 @@ export default function SettingsView({ api, connection, onConnect, onDisconnect,
         toast.success("模型接口已保存");
     }
     catch (e) {
-        toast.error((e as Error).message);
+        if (!isRequestCancelled(e)) toast.error((e as Error).message);
     }
     finally {
         setBusy(false);
@@ -110,7 +110,7 @@ export default function SettingsView({ api, connection, onConnect, onDisconnect,
         toast.success(r.message);
     }
     catch (e) {
-        toast.error((e as Error).message);
+        if (!isRequestCancelled(e)) toast.error((e as Error).message);
     }
     finally {
         setBusy(false);
@@ -126,7 +126,7 @@ export default function SettingsView({ api, connection, onConnect, onDisconnect,
         await getSettings();
     }
     catch (e) {
-        toast.error((e as Error).message);
+        if (!isRequestCancelled(e)) toast.error((e as Error).message);
     }
     finally {
         setBusy(false);
@@ -141,7 +141,7 @@ export default function SettingsView({ api, connection, onConnect, onDisconnect,
         toast.success("Token 已撤销");
     }
     catch (e) {
-        toast.error((e as Error).message);
+        if (!isRequestCancelled(e)) toast.error((e as Error).message);
     }
     finally {
         setBusy(false);
