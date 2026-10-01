@@ -1,4 +1,4 @@
 <script setup>
-defineProps({ variant: { type: String, default: "" }, busy: Boolean });
+defineProps({ variant: { type: String, default: "" }, busy: Boolean, type: { type: String, default: "button" } });
 </script>
-<template><button :class="variant" :disabled="busy"><slot /></button></template>
+<template><button :type="type" :class="variant" :disabled="busy" :aria-busy="busy||undefined"><slot /></button></template>

@@ -22,3 +22,20 @@ jobs:
         env:
           CLOUDFLARE_CF_FETCH_ENABLED: "false"
           WRANGLER_SEND_METRICS: "false"
+      - name: Install isolated browser test runner
+        run: |
+          npm install --prefix /tmp/flowmaster-browser --no-package-lock --ignore-scripts playwright@1.61.1
+          node /tmp/flowmaster-browser/node_modules/playwright/cli.js install --with-deps chromium
+      - name: Browser smoke with mocked API
+        run: |
+          pnpm exec vite preview --host 127.0.0.1 --port 4173 > /tmp/flowmaster-preview.log 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true' EXIT
+          PLAYWRIGHT_MODULE=/tmp/flowmaster-browser/node_modules/playwright node tests/browser-smoke.mjs
+      - name: Save UI screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vue-ui-screenshots
+          path: test-results/*.png
+          if-no-files-found: ignore
