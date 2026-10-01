@@ -44,11 +44,11 @@ Cloudflare Git 构建参数应设置为：
 - 生产分支：`main`，仓库根目录。
 - 构建命令：`pnpm build`。
 - 生产部署命令：`pnpm run deploy`。
-- 非生产分支的预览部署命令：`pnpm run deploy:preview`（上传预览版本，不切换生产流量）。
+- 非生产分支的预览部署命令：保留 `npx wrangler preview`。也可使用 `pnpm run deploy:preview`，它先构建并验证产物，再执行同一个 `wrangler preview` 命令，不切换到 `versions upload`。
 
 根目录 `wrangler.jsonc` 是绑定、域名和数据库配置的来源。Vite 构建生成实际部署配置，入口记录在 `.wrangler/deploy/config.json` 中。部署脚本先运行构建，检查生成的 Worker 入口、资源目录和编译后的 JavaScript，再把生成配置的路径显式交给 Wrangler。不要让部署脚本强制读取根配置，也不要依赖缓存中的 `dist/`。如果控制台也填写了构建命令，部署脚本会再次构建，这是有意的校验取舍。
 
-`dist/` 是构建产物，不提交到 Git。根配置中的 `build.command` 是直接运行 Wrangler 时的兼容入口，不能替代 Cloudflare 构建设置。对于 `assets.directory ... dist/client does not exist`，不要创建空目录绕过检查：新的 `pnpm build` 会验证前端和 Worker 产物是否完整。仅有该错误片段仍不能区分构建失败、产物丢失或使用了错误的配置；需结合前面的构建日志判断。
+`dist/` 是构建产物，不提交到 Git。根配置中的 `build.command` 是直接运行 Wrangler 时的兼容入口，不能替代 Cloudflare 构建设置。Wrangler 4.92.0 的 `preview` 会先检查资源目录，再调用执行自定义构建的入口，所以干净检出时必须先完成 `pnpm build`；只修改 `build.command` 无法改变这一顺序。对于 `assets.directory ... dist/client does not exist`，不要创建空目录绕过检查：新的 `pnpm build` 会验证前端和 Worker 产物是否完整。仅有该错误片段仍不能区分构建失败、产物丢失或使用了错误的配置；需结合前面的构建日志判断。
 
 使用 `pnpm deploy:check` 进行“构建 + 产物检查 + Wrangler dry-run”，不会发布。上述控制台命令需要在 Cloudflare 中配置，修改仓库不会自动修改现有控制台设置。更新已有部署时复用数据库与 Secrets，不要重复创建或更换密钥。
 

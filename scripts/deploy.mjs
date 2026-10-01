@@ -21,6 +21,6 @@ function run(script, args) {
 run("./run-framework.mjs", ["build"]);
 const { configPath } = checkBuild(root);
 const args = mode === "preview"
-  ? ["versions", "upload"]
+  ? ["preview"]
   : ["deploy", ...(mode === "check" ? ["--dry-run"] : [])];
 run("../node_modules/wrangler/bin/wrangler.js", [...args, "--config", configPath]);
