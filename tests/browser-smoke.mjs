@@ -46,6 +46,8 @@ try{
   await page.getByRole("heading",{name:"Created project",exact:true}).waitFor();
   await page.getByRole("link",{name:"研究工作区",exact:true}).click();
 
+  await page.getByRole("heading",{name:"研究工作区",exact:true}).waitFor();
+  await page.waitForFunction(()=>document.querySelector("#notice")?.textContent==="");
   mkdirSync("test-results",{recursive:true});
   await page.screenshot({path:"test-results/vue-desktop.png",fullPage:true});
   await page.getByRole("link",{name:"系统设置",exact:true}).click();

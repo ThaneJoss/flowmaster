@@ -177,3 +177,6 @@ main{padding:20px 16px}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important;scroll-behavior:auto!important}
 }
 
+
+/* A wrapped mobile header has variable height: keep only the tab bar sticky. */
+@media(max-width:760px){header{position:static}nav{top:0}}
