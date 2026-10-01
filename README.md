@@ -39,9 +39,18 @@ React 19 + TypeScript + Vinext/Vite、Shadcn/Radix UI、Cloudflare Workers、D1�
 - 界面时间统一显示为北京时间（`Asia/Shanghai`），保证 Cloudflare 服务端与浏览器首次渲染一致。
 - 管理员 Token 和模型加密密钥通过 Cloudflare Secrets 设置，不写入仓库。
 
-Cloudflare Git 构建参数应设置为：`main` 分支、仓库根目录、构建命令 `pnpm build` 和部署命令 `npx wrangler deploy`（也可使用 `pnpm run deploy`）。根目录的 `wrangler.jsonc` 是唯一的部署配置来源；Vite 直接读取它，生成的部署配置保留账号、域名、D1、`ASSETS` 绑定与 `/api/*` 优先进入 Worker 的规则。更新已有部署时复用数据库与 Secrets，不要重复创建或更换密钥。
+Cloudflare Git 构建参数应设置为：
 
-`dist/` 是构建产物，不提交到 Git。如果日志在依赖安装完成后直接执行 `npx wrangler deploy`，并报 `dist/server/index.js` 不存在，说明部署前尚未生成产物。根配置的 `build.command` 会让 Wrangler 先运行 `pnpm build`；已经显式构建时，默认部署命令读取 Vite 生成的配置，不重复构建。Cloudflare 控制台的构建命令仍建议明确填写为 `pnpm build`。
+- 生产分支：`main`，仓库根目录。
+- 构建命令：`pnpm build`。
+- 生产部署命令：`pnpm run deploy`。
+- 非生产分支的预览部署命令：`pnpm run deploy:preview`（上传预览版本，不切换生产流量）。
+
+根目录 `wrangler.jsonc` 是绑定、域名和数据库配置的来源。Vite 构建生成实际部署配置，入口记录在 `.wrangler/deploy/config.json` 中。部署脚本先运行构建，检查生成的 Worker 入口、资源目录和编译后的 JavaScript，再把生成配置的路径显式交给 Wrangler。不要让部署脚本强制读取根配置，也不要依赖缓存中的 `dist/`。如果控制台也填写了构建命令，部署脚本会再次构建，这是有意的校验取舍。
+
+`dist/` 是构建产物，不提交到 Git。根配置中的 `build.command` 是直接运行 Wrangler 时的兼容入口，不能替代 Cloudflare 构建设置。对于 `assets.directory ... dist/client does not exist`，不要创建空目录绕过检查：新的 `pnpm build` 会验证前端和 Worker 产物是否完整。仅有该错误片段仍不能区分构建失败、产物丢失或使用了错误的配置；需结合前面的构建日志判断。
+
+使用 `pnpm deploy:check` 进行“构建 + 产物检查 + Wrangler dry-run”，不会发布。上述控制台命令需要在 Cloudflare 中配置，修改仓库不会自动修改现有控制台设置。更新已有部署时复用数据库与 Secrets，不要重复创建或更换密钥。
 
 以下初始化步骤供首次部署到其他账号时使用；更换账号时需同步修改 `account_id`、数据库 ID 和自定义域名。
 
