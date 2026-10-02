@@ -1,17 +1,37 @@
 {
-  "architecture": "Vue 3 + Vite static frontend + standalone Worker MCP server + D1",
+  "architecture": "Vue 3 + typed MCP client + Worker domain services + D1",
   "status": "typecheck-and-build-passed-tests-not-run",
   "localExecution": true,
-  "change": "Wrap canvas layout to viewport width, preserve readable zoom, route edges across rows and place new nodes without overlap",
+  "change": "Project-centered workflow, authoritative execution records, scoped loading and typed MCP domain operations",
+  "validatedCodeCommit": "d78e1e663189b6eeab745448457e5b9dbd93efd9",
   "checksRun": [
-    { "command": "pnpm check", "status": "passed" },
-    { "command": "pnpm build", "status": "passed" },
-    { "command": "pnpm deploy:check", "status": "passed" }
+    {
+      "command": "node node_modules/typescript/bin/tsc --noEmit",
+      "status": "passed",
+      "scope": "Integrated code, including web/src/**/*.ts composables"
+    },
+    {
+      "command": "node scripts/publish.mjs check",
+      "environment": {
+        "CLOUDFLARE_CF_FETCH_ENABLED": "false",
+        "WRANGLER_SEND_METRICS": "false"
+      },
+      "status": "passed",
+      "scope": "Vue production build, build artifact verification and Wrangler deploy --dry-run; no deployment"
+    },
+    {
+      "command": "git diff --check origin/main...HEAD",
+      "status": "passed",
+      "scope": "Integrated code diff at validatedCodeCommit"
+    }
   ],
+  "testsRun": false,
+  "manualAcceptanceRun": false,
   "notYetVerified": [
-    "Unit and integration tests for responsive canvas layout",
-    "Browser verification of desktop and mobile canvas wrapping, zoom and dragging",
+    "Unit, integration and smoke tests for this change",
+    "Browser workflows and the manual checklist in docs/MIGRATION.md",
+    "External MCP client interoperability",
     "Cloudflare preview or production deployment"
   ],
-  "notes": "Tests were not run, as requested. Type checking, Vue compilation and Worker packaging passed; these do not replace browser interaction or visual verification. No remote deployment is claimed."
+  "notes": "Tests, browser checks and smoke checks were not run, as requested. Type checking and packaging do not replace behavioral validation. No remote deployment was performed. Earlier validation results were not reused for this change."
 }

@@ -29,8 +29,9 @@ const lines = computed(() => props.hypothesis.edges.map(edge => {
   if (!source || !target) return null;
   return { id: edge.source+"-"+edge.target, d: nodeConnectionPath(source, target, positions.value, width.value) };
 }).filter(Boolean));
-const statuses={pending:"待验证",running:"验证中",verified:"已验证",rejected:"已丢弃"};
-const types={baseline:"基线训练",observation:"结果观察",hypothesis:"研究假设",experiment:"实验验证",conclusion:"研究结论"};
+const progressLabels={pending:"待开始",in_progress:"进行中",completed:"已完成"};
+const resultLabels={pending:"待判定",running:"判定中",verified:"已验证",rejected:"未通过"};
+const types={baseline:"基线",observation:"观察",hypothesis:"假设",experiment:"实验",conclusion:"结论"};
 function start(event,node) {
   if(props.busy || event.button !== 0) return;
   emit("select",node.id);
@@ -74,13 +75,13 @@ onBeforeUnmount(()=>{resizeObserver?.disconnect();end(true);});
 </script>
 <template>
   <section class="panel canvas-shell" aria-label="研究流程画布" :style="{'--node-width':NODE_WIDTH+'px','--node-height':NODE_HEIGHT+'px'}">
-    <div class="row flow-toolbar"><UiButton @click="emit('add',{width:viewportWidth})" :busy="busy">＋ 节点</UiButton><UiButton @click="arrange" :busy="busy">自动布局</UiButton><UiButton @click="changeZoom(-.1)" aria-label="缩小">−</UiButton><span>{{Math.round(zoom*100)}}%</span><UiButton @click="changeZoom(.1)" aria-label="放大">＋</UiButton><UiButton @click="fit">适配</UiButton></div>
+    <div class="row flow-toolbar"><UiButton @click="emit('add',{width:viewportWidth})" :busy="busy">＋ 步骤</UiButton><UiButton @click="arrange" :busy="busy">自动布局</UiButton><UiButton @click="changeZoom(-.1)" aria-label="缩小">−</UiButton><span>{{Math.round(zoom*100)}}%</span><UiButton @click="changeZoom(.1)" aria-label="放大">＋</UiButton><UiButton @click="fit">适配</UiButton></div>
     <div ref="viewport" class="canvas"><div class="canvas-scaled" :style="{width:Math.max(viewportWidth,width*zoom)+'px',height:height*zoom+'px'}"><div class="canvas-space" :style="{width:width+'px',height:height+'px',transform:'scale('+zoom+')'}">
       <svg :width="width" :height="height" aria-hidden="true"><defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#95a9ca"/></marker></defs><path v-for="line in lines" :key="line.id" :d="line.d" fill="none" stroke="#95a9ca" stroke-width="2" marker-end="url(#arrow)"/></svg>
-      <button v-for="node in positions" :key="node.id" class="node" :class="{selected:node.id===selectedId}" :style="{left:node.x+'px',top:node.y+'px'}" :title="node.title" :aria-pressed="node.id===selectedId" @pointerdown="start($event,node)" @pointermove="move" @pointerup="end()" @pointercancel="end(true)" @click="emit('select',node.id)" @keydown="key($event,node)"><small>{{types[node.type]}}</small><strong>{{node.title}}</strong><span class="badge" :class="node.status">{{statuses[node.status]}}</span></button>
-      <div v-if="!positions.length" class="empty">还没有流程节点，点击“＋ 节点”开始</div>
+      <button v-for="node in positions" :key="node.id" class="node" :class="{selected:node.id===selectedId}" :style="{left:node.x+'px',top:node.y+'px'}" :title="node.title" :aria-pressed="node.id===selectedId" @pointerdown="start($event,node)" @pointermove="move" @pointerup="end()" @pointercancel="end(true)" @click="emit('select',node.id)" @keydown="key($event,node)"><small>{{types[node.type]}}</small><strong>{{node.title}}</strong><span class="badge" :class="node.progress||'pending'">{{progressLabels[node.progress||'pending']}}</span></button>
+      <div v-if="!positions.length" class="empty">还没有步骤，点击“＋ 步骤”开始</div>
     </div></div></div>
-    <small>自动布局按画布宽度换行，沿箭头查看流程；拖动节点或用方向键调整位置。修改后自动保存</small>
+    <small>自动布局按画布宽度换行，沿箭头查看流程；拖动步骤或用方向键调整位置。修改后自动保存</small>
     <small v-if="fitNotice" class="canvas-notice" role="status">{{fitNotice}}</small>
   </section>
 </template>

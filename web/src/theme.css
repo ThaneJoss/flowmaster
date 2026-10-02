@@ -184,3 +184,57 @@ main{padding:20px 16px}
 
 /* A wrapped mobile header has variable height: keep only the tab bar sticky. */
 @media(max-width:760px){header{position:static}nav{top:0}}
+
+/* Project context remains visible while each view owns its filters. */
+.project-heading>a{display:inline-block;margin-bottom:14px}
+.project-heading .toolbar{margin-bottom:16px}
+.project-tabs{display:flex;align-items:center;gap:8px;margin:0 0 24px;border-bottom:1px solid var(--line);padding-bottom:12px;flex-wrap:wrap}
+.project-tabs>span{margin-left:auto;font-size:13px}
+.project-tabs button{min-width:84px}
+.project-search{width:min(440px,100%);margin-bottom:20px}
+.project-cards{grid-template-columns:repeat(auto-fill,minmax(270px,1fr))}
+.text-button{display:inline;padding:0;min-height:0;border:0;background:transparent;color:var(--blue);text-align:left;border-radius:2px}
+.text-button:hover{background:transparent;text-decoration:underline}
+.card h2 .text-button{font:inherit;color:inherit}
+.workspace{grid-template-columns:210px minmax(340px,1fr) 360px}
+.workspace.without-inspector{grid-template-columns:210px minmax(0,1fr)}
+.workspace .inspector{max-height:none;padding:20px}
+.inspector form{display:block}
+.inspector .toolbar h2,.inspector .toolbar h3{margin:0}
+.inspector .toolbar{margin-bottom:14px;gap:8px}
+.inspector .form-grid{gap:12px}
+.inspector textarea{min-height:80px}
+.form-section{border-top:1px solid var(--line);padding:12px 0}
+summary{cursor:pointer;font-weight:600;padding:4px 0}
+summary+*{margin-top:12px}
+.choice-list{display:grid;gap:6px;margin-top:12px;max-height:190px;overflow:auto}
+.check{display:flex;flex-direction:row;align-items:flex-start;gap:8px;font-weight:400;margin-bottom:8px}
+.check input{width:auto;flex:none;margin-top:5px}
+.resource-picker{border:0;padding:0;margin:12px 0;min-width:0}
+.resource-picker legend{font-weight:550;padding:0;margin-bottom:8px}
+.resource-picker .check{overflow-wrap:anywhere}
+.current-result,.step-history{margin-top:24px;padding-top:20px;border-top:1px solid var(--line)}
+.current-result .actions{justify-content:flex-start}
+.current-result .toolbar{align-items:flex-start}
+.record-filters{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:22px}
+.record-filters>input{flex:1;min-width:180px}
+.record-card{padding:18px 0;border-bottom:1px solid var(--line)}
+.record-card:first-of-type{padding-top:4px}
+.record-card .toolbar{margin-bottom:8px}
+.record-card h3{margin:0}
+.record-summary{white-space:pre-wrap;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;margin:12px 0}
+.record-origin{margin-top:2px;font-size:13px}
+.record-card .actions{justify-content:flex-start;margin-top:12px}
+.record-card .actions button{font-size:13px;min-height:36px;padding:5px 9px}
+.pagination{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:18px}
+.pagination small{margin-right:auto}
+.pagination button{font-size:13px;min-height:38px;padding:6px 10px}
+.settings-stack{display:grid;gap:20px;max-width:900px}
+.connection-form{max-width:560px;margin-top:20px}
+.documentation{font-size:13px;overflow-wrap:anywhere}
+.record-detail>.badge{display:inline-block;margin-right:8px}
+.node .result-badge{position:absolute;right:10px;bottom:10px;font-size:10px;max-width:48%;overflow:hidden;text-overflow:ellipsis}
+.badge.in_progress{background:#e9f1ff;color:#2563eb}
+.badge.completed{background:#e9f8ef;color:#157847}
+@media(max-width:1500px){.workspace{grid-template-columns:190px minmax(0,1fr)}.workspace>.inspector{grid-column:1/-1}.inspector{display:block}.inspector .form-grid{display:grid}.step-history .record-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(270px,1fr));gap:16px}.step-history .record-list>.pagination,.step-history .record-list>p{grid-column:1/-1}}
+@media(max-width:760px){.workspace,.workspace.without-inspector{display:block}.flow-list{margin-bottom:16px}.workspace>.inspector{margin-top:16px}.project-tabs>span{width:100%;margin-left:0}.project-cards{grid-template-columns:1fr}.record-filters>*{width:100%}.inspector .form-grid{display:block}.step-history .record-list{display:block}.settings-stack{gap:16px}.connection-form{margin-top:14px}}
