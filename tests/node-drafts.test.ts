@@ -20,14 +20,14 @@ test('node and hypothesis switches retain isolated, memory-only drafts without m
     try {
         s.nodeDraft.value!.title = 'Unsaved A'; s.upstream.value = ['b'];
         s.nodeId.value = 'b'; await nextTick();
-        s.nodeDraft.value!.summary = 'Unsaved B';
+        s.nodeDraft.value!.rationale = 'Unsaved B';
         s.hypothesisId.value = 'h2'; s.nodeId.value = 'a'; await nextTick();
         assert.equal(s.nodeDraft.value!.title, 'h2 A');
         s.nodeDraft.value!.title = 'Other hypothesis A';
         for (let i = 0; i < 4; i++) {
             s.hypothesisId.value = 'h1'; s.nodeId.value = 'a'; await nextTick();
             assert.equal(s.nodeDraft.value!.title, 'Unsaved A'); assert.deepEqual(s.upstream.value, ['b']);
-            s.nodeId.value = 'b'; await nextTick(); assert.equal(s.nodeDraft.value!.summary, 'Unsaved B');
+            s.nodeId.value = 'b'; await nextTick(); assert.equal(s.nodeDraft.value!.rationale, 'Unsaved B');
             s.hypothesisId.value = 'h2'; s.nodeId.value = 'a'; await nextTick();
             assert.equal(s.nodeDraft.value!.title, 'Other hypothesis A');
         }
@@ -39,12 +39,12 @@ test('node and hypothesis switches retain isolated, memory-only drafts without m
 test('drag/layout refresh updates coordinates and clean fields without losing dirty inspector fields', async () => {
     const s = setup();
     try {
-        s.nodeDraft.value!.summary = 'Keep this';
+        s.nodeDraft.value!.rationale = 'Keep this';
         const updated = structuredClone(hypothesis('h1'));
         updated.nodes[0].x = 320; updated.nodes[0].y = 90; updated.nodes[0].title = 'Remote clean title';
         updated.edges = [{ source: 'b', target: 'a' }];
         s.hypotheses.value = [updated, hypothesis('h2')]; await nextTick();
-        assert.equal(s.nodeDraft.value!.summary, 'Keep this');
+        assert.equal(s.nodeDraft.value!.rationale, 'Keep this');
         assert.equal(s.nodeDraft.value!.x, 320); assert.equal(s.nodeDraft.value!.y, 90);
         assert.equal(s.nodeDraft.value!.title, 'Remote clean title');
         assert.deepEqual(s.upstream.value, ['b']); assert.equal(s.conflicted.value, false);
@@ -98,12 +98,12 @@ test('logout/workspace change clears drafts even when the next account reuses th
     const s = setup();
     try {
         s.nodeDraft.value!.title = 'Private draft';
-        s.nodeId.value = 'b'; await nextTick(); s.nodeDraft.value!.summary = 'Another private draft';
+        s.nodeId.value = 'b'; await nextTick(); s.nodeDraft.value!.rationale = 'Another private draft';
         s.clear(); s.hypotheses.value = []; await nextTick();
         assert.equal(s.nodeDraft.value, null); assert.equal(s.dirty.value, false);
         s.hypotheses.value = [hypothesis('h1')]; s.nodeId.value = 'a'; await nextTick();
         assert.equal(s.nodeDraft.value!.title, 'h1 A');
-        s.nodeId.value = 'b'; await nextTick(); assert.equal(s.nodeDraft.value!.summary, '');
+        s.nodeId.value = 'b'; await nextTick(); assert.equal(s.nodeDraft.value!.rationale, '');
     } finally { s.scope.stop(); }
 });
 
