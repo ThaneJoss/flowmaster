@@ -1,95 +1,114 @@
 # FlowMaster
 
-中文研究工作区：Vue 3 静态前端、Vite 构建、独立 Cloudflare Worker MCP 服务、D1 数据库。
+中文研究流程与实验记录管理工具。用项目组织研究假设，用可视化节点描述步骤与依赖，用真实实验记录保存结果和证据；支持浏览器操作与外部 MCP 客户端接入。
 
-## 功能与数据兼容
+[站点](https://flow.thanejoss.com) · [快速开始](#快速开始) · [MCP 接入](#mcp-接入) · [部署](#部署) · [文档](#文档)
 
-- 项目、假设、节点、实验记录和资源管理
-- 三栏研究工作区：假设列表、可缩放流程图、节点详情
-- 拖动节点、方向键调整位置、按画布宽度换行的自动布局、上游连接编辑与服务端 DAG 校验
-- 手动录入实验结果、查看历史日志、JSON 导出
-- Token 登录、权限与到期时间、Token 签发和撤销
-- 通过 MCP 工具读取和维护工作区，供支持 Streamable HTTP 的客户端使用
-- 响应式布局、键盘可操作弹窗和统一的浅灰 / 白色 / 蓝色主题
+## 能做什么
 
-已移除模型服务配置、模型 API Key 管理、模型连接测试和 Agent 分析。FlowMaster 不再主动调用 LLM API。历史实验的 `source: "agent"` 标记及已有研究内容仍可读取。
+- **组织研究**：管理项目、假设、流程节点及数据集、代码、文档等资源。
+- **编辑流程**：拖动或用方向键移动节点，缩放画布，按可用宽度自动换行布局，编辑上游依赖并校验循环连接。
+- **追踪结果**：录入和修正实验记录，查看历史日志，导出 JSON；当前结果与关联节点同步更新。
+- **连接工具**：通过 MCP 读写同一工作区，使用分级 Token 控制访问权限、有效期和撤销。
 
-**接口兼容性变更：** 对外接口统一为 `/mcp`，前端也通过 MCP 访问工作区。旧 `/api`、`/api/v1/*` 和 `/openapi.json` 返回 404；旧 REST 客户端必须改用 MCP。D1 表结构、数据库 ID 和现有 Token 沿用，无需迁移或重置已有业务数据；历史模型设置不会自动从数据库清除。仍为单个共享工作区，不是多租户系统。
+技术栈：**Vue 3 + Vite · Cloudflare Workers · D1 · MCP**。所有 Token 访问同一个共享工作区。FlowMaster 不调用 LLM API，也不负责执行实验。
+
+## 快速开始
+
+准备 Node.js **24**（最低 `22.13.0`）和 pnpm **11.25.0**，版本要求见 [package.json](package.json)。
+
+### 1. 安装与配置
+
+```sh
+git clone https://github.com/ThaneJoss/flowmaster.git
+cd flowmaster
+pnpm install --frozen-lockfile
+cp .dev.vars.example .dev.vars
+```
+
+编辑 `.dev.vars`，将 `ADMIN_TOKEN` 替换为至少 32 字符的随机值，可用 `openssl rand -hex 32` 生成。它是 FlowMaster 的管理员登录凭据，**不是 Cloudflare API Token**。同域开发时 `ALLOWED_ORIGINS` 留空即可。
+
+### 2. 初始化本地数据与构建
+
+```sh
+pnpm db:migrate:local
+pnpm build
+```
+
+先构建前端，让 Worker 可以读取静态资源。以上步骤仅使用本地数据库，不需要生产部署凭据。
+
+### 3. 启动并登录
+
+在两个终端分别运行：
+
+```sh
+# 终端一：Worker 与本地 D1，端口 8787
+pnpm dev:api
+```
+
+```sh
+# 终端二：Vite 前端，通常为 http://127.0.0.1:5173
+pnpm dev
+```
+
+打开 Vite 输出的地址，点击“管理员登录”：服务地址留空，访问 Token 填入 `.dev.vars` 中的 `ADMIN_TOKEN`。前端会将 `/mcp` 请求代理到本地 Worker。
+
+首次登录后，创建项目、添加假设和节点，再选中节点录入实验结果。管理员也可在“系统设置”向空工作区导入示例。
+
+只需预览构建产物时，在 `pnpm build` 后运行 `pnpm start`，打开 Wrangler 输出的地址即可。
 
 ## MCP 接入
 
-服务地址为 `https://flow.thanejoss.com/mcp`，本地为 `http://127.0.0.1:8787/mcp`。使用 Streamable HTTP，每个请求携带 `Authorization: Bearer <FlowMaster Token>`。支持 `initialize`、`notifications/initialized`、`ping`、`tools/list` 和 `tools/call`。
+| 配置项 | 值 |
+| --- | --- |
+| 站点端点 | `https://flow.thanejoss.com/mcp` |
+| 本地端点 | `http://127.0.0.1:8787/mcp` |
+| 传输 | Streamable HTTP，无状态 JSON 响应 |
+| 鉴权 | 每个请求携带 `Authorization: Bearer <FlowMaster Token>` |
 
-Token 需手动配置：管理员通过 `ADMIN_TOKEN` 登录，在界面或 `tokens_create` 工具中签发 `read`、`write` 或 `admin` Token，再填入 MCP 客户端的 Bearer Token 设置。本服务不提供 OAuth 登录或自动发现；需要客户端支持手动 Bearer Token。不要将 Token 放入 URL 或提交到仓库。
+管理员可在“系统设置”或通过 `tokens_create` 签发 Token：`read` 用于读取，`write` 增加业务写入权限，`admin` 还可管理 Token 和导入示例。将签发的 Token 手动填入 MCP 客户端的认证设置；客户端需支持 Bearer Token，本服务不提供 OAuth。
 
-服务使用官方 `@modelcontextprotocol/sdk` 的无状态 Streamable HTTP 传输，返回 JSON，不维护会话或提供 SSE 通知流。`GET /mcp` 和 `DELETE /mcp` 返回 405。完整工具参数、响应格式和迁移说明见 [docs/API.md](docs/API.md)。
+连接时先完成 `initialize` 和 `notifications/initialized`，再用 `tools/list` 发现工具、`tools/call` 调用。**工具参数以 `tools/list` 返回的 schema 为准**；协议示例与错误处理参考 [API 文档](docs/API.md)。
 
-## 构建与发布
+## 常用命令
 
-前端源码位于 `web/`，Vite 输出 `dist/client/`。Worker 源码位于 `worker/index.ts`，由 Wrangler 直接打包。根目录 `wrangler.jsonc` 是唯一 Worker 配置。
+| 命令 | 用途 |
+| --- | --- |
+| `pnpm check` | TypeScript 类型检查 |
+| `pnpm build` | 构建前端并校验静态产物 |
+| `pnpm test` | 单元与集成测试 |
+| `pnpm test:worker` | 构建、打包并检查隔离的本地 Worker / D1 |
+| `pnpm run deploy:check` | 前端构建与 Worker dry-run 打包，不发布 |
+| `pnpm run deploy:preview` | 构建并运行 Wrangler preview |
+| `pnpm run deploy` | 构建并发布生产 |
 
-发布脚本先运行 Vite，再检查 HTML / JavaScript 产物，最后启动 Wrangler：
+## 部署
 
-- `pnpm run deploy`：构建并发布生产
-- `pnpm run deploy:preview`：构建并运行 Wrangler preview
-- `pnpm run deploy:check`：构建并进行 Wrangler dry-run，不发布
+前端位于 `web/`，构建输出为 `dist/client/`；Worker 入口为 `worker/index.ts`。账号、域名、D1 和静态资源配置统一在 [wrangler.jsonc](wrangler.jsonc)。
 
-直接运行 `npx wrangler preview` 不会替你完成这条流程。Wrangler 4.92.0 的 preview 在运行自定义构建之前检查静态资源目录，因此需要先构建前端。
+自行部署到 Cloudflare 时，先配置账号、域名和 D1 数据库 ID，绑定以下资源：
 
-### Cloudflare Git 构建设置
+| 配置 | 要求 |
+| --- | --- |
+| `DB` | D1 数据库绑定，仓库默认数据库名为 `flowmaster-db` |
+| `ADMIN_TOKEN` | Worker Secret，至少 32 字符的随机值；线上单独配置 |
+| `ALLOWED_ORIGINS` | 前端与 MCP 同域时留空；跨域时填写逗号分隔的精确 Origin |
 
-- 根目录：仓库根目录
-- 构建命令：`pnpm build`
-- 生产部署命令：`pnpm run deploy`
-- 非生产分支 / 预览部署命令：`pnpm run deploy:preview`
-- 生产分支：`main`
-- Node.js：24，pnpm：`package.json` 中固定的 11.25.0
+新建数据库后执行 `pnpm db:migrate:remote`，再运行 `pnpm run deploy`。发布脚本会先构建并校验产物；预览也使用表中的脚本，以确保静态资源已生成。
 
-发布脚本会再次构建，确保发布步骤拿到完整产物。仓库提交不会自动修改控制台设置，预览绑定仍由 Cloudflare 的预览配置管理。
+使用 Cloudflare Git 构建时，根目录选仓库根目录，构建命令填 `pnpm build`，生产部署命令填 `pnpm run deploy`，非生产分支部署命令填 `pnpm run deploy:preview`，生产分支为 `main`。构建环境使用 Node.js 24 和固定版本的 pnpm。
 
-## 安装与验证
+<details>
+<summary>已有实例与旧接口兼容</summary>
 
-```sh
-pnpm install --frozen-lockfile
-pnpm check
-pnpm test
-pnpm test:worker
-```
+已有实例沿用 D1 数据、数据库绑定与访问 Token；当前更新无需重建数据库。旧 `/api`、`/api/*` 和 `/openapi.json` 已关闭，对外业务接口统一为 `/mcp`。
 
-`pnpm test:worker` 会构建 Vue、执行 Wrangler dry-run，再启动隔离的本地 Worker / D1 检查静态资源和 MCP 工作流。CI 不需要生产部署凭据或模型服务凭据。
+历史 `source: "agent"` 记录保留，模型配置与模型调用功能已移除。`ENCRYPTION_KEY` 和 `MODEL_ALLOWED_HOSTS` 不再需要；旧模型配置不会被读取或自动删除。
 
-`pnpm build` 只构建和检查前端产物；`pnpm deploy:check` 还会检查 Worker 打包，均不会发布。本次 MCP 迁移已通过类型检查、前端构建及 Worker dry-run 打包；按要求未运行测试，验证状态见 [docs/VALIDATION.json](docs/VALIDATION.json)。
-
-## 本地开发
-
-1. 将 `.dev.vars.example` 复制为 `.dev.vars`，将 `ADMIN_TOKEN` 替换为至少 32 字符的本地随机值
-2. `pnpm db:migrate:local`
-3. `pnpm build`
-4. 终端一运行 `pnpm dev:api`（Worker 在 8787）
-5. 终端二运行 `pnpm dev`（Vite 提供前端，`/mcp` 代理到 8787）
-
-也可以先 `pnpm build`，再 `pnpm start` 预览完整打包后的本地应用。`dev:api` 是本地 Worker 启动脚本的名称，服务对外使用 MCP。
-
-## 已有 Cloudflare 环境
-
-- Worker：`flowmaster`
-- 域名：`https://flow.thanejoss.com`
-- D1：`flowmaster-db`，绑定 `DB`
-- 必需 Secret：`ADMIN_TOKEN`（至少 32 字符）
-- `ALLOWED_ORIGINS`：逗号分隔的精确 Origin；前端与 MCP 同域时留空
-
-首次部署新账号时才创建 D1、修改 `wrangler.jsonc` 中账号 / 域名 / 数据库 ID 并执行 `pnpm db:migrate:remote`。现有环境沿用数据库和迁移文件。`ENCRYPTION_KEY` 和 `MODEL_ALLOWED_HOSTS` 已不再使用；服务启动和工具调用不依赖它们。
-
-管理员使用 Worker Secret `ADMIN_TOKEN` 登录，不要使用 Cloudflare API Token。MCP 客户端不带 `Origin` 时仍须提供有效 Token；带 `Origin` 的请求必须来自同域或 `ALLOWED_ORIGINS`。
-
-## 安全与会话
-
-默认只在浏览器当前会话保存连接凭据；“在此设备记住登录”为显式可选项。退出或切换账号时取消旧请求，清空工作区和 Token 列表。已在服务端完成的写入不能通过取消浏览器请求撤销。
-
-前端通过 Vue 文本插值展示研究内容。资源链接仅允许 HTTP(S)，新窗口使用 `noopener/noreferrer`。MCP 工具校验 Origin、权限、输入和 revision；跨域响应允许 MCP 必需请求头并暴露 MCP 响应头。
+</details>
 
 ## 文档
 
-- [docs/API.md](docs/API.md)：MCP 接入、工具与错误说明
-- [docs/DESIGN.md](docs/DESIGN.md)：视觉规范
-- [docs/VALIDATION.json](docs/VALIDATION.json)：当前变更的验证状态
+- [MCP 接入参考](docs/API.md)：协议、调用示例与错误处理。
+- [界面设计](docs/DESIGN.md)：交互和视觉规范。
+- [验证记录](docs/VALIDATION.json)：已记录的检查范围与尚未验证的事项。
