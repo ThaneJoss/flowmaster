@@ -68,7 +68,9 @@ export function makeWorkspaceClient(connection: Connection, sessionSignal?: Abor
     function collection<T extends BaseRecord>(name: keyof Workspace): CollectionClient<T> {
         return {
             async list(query = {}, options) {
-                const page = await call<T[]>(`${name}_list`, { ...query }, options);
+                // Empty form filters mean "all"; MCP enums and IDs require omission.
+                const args = Object.fromEntries(Object.entries(query).filter(([, value]) => value !== undefined && value !== ''));
+                const page = await call<T[]>(`${name}_list`, args, options);
                 if (!Array.isArray(page.data) || !Number.isSafeInteger(page.total) || page.total! < 0) throw new Error('服务返回了无效的分页列表');
                 return page as Page<T>;
             },
