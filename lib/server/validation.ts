@@ -1,10 +1,11 @@
 import { z } from "zod";
+import { MAX_NODE_COORDINATE } from "../types.ts";
 const id = z.string().min(1).max(100).regex(/^[a-zA-Z0-9_-]+$/);
 const text = z.string().max(16000).default("");
 const title = z.string().trim().min(1).max(200);
 export const status = z.enum(["pending", "running", "verified", "rejected"]);
 const base = { id: id.optional(), updatedAt: z.string().optional(), revision: z.number().int().positive().optional() };
-export const nodeSchema = z.object({ id, title, type: z.enum(["baseline", "observation", "hypothesis", "experiment", "conclusion"]), status, x: z.number().min(0).max(10000), y: z.number().min(0).max(10000), inputs: text, output: text, summary: text, rationale: text, method: text, conclusion: text, nextAction: text, startedAt: z.string().max(100).default(""), duration: z.string().max(100).default("") });
+export const nodeSchema = z.object({ id, title, type: z.enum(["baseline", "observation", "hypothesis", "experiment", "conclusion"]), status, x: z.number().min(0).max(MAX_NODE_COORDINATE), y: z.number().min(0).max(MAX_NODE_COORDINATE), inputs: text, output: text, summary: text, rationale: text, method: text, conclusion: text, nextAction: text, startedAt: z.string().max(100).default(""), duration: z.string().max(100).default("") });
 const edgeSchema = z.object({ source: id, target: id });
 export const schemas = {
     projects: z.object({ ...base, name: title, description: text }),

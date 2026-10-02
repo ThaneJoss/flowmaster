@@ -4,6 +4,7 @@ import UiButton from "./components/UiButton.vue";
 import UiField from "./components/UiField.vue";
 import UiModal from "./components/UiModal.vue";
 import FlowCanvas from "./components/FlowCanvas.vue";
+import { layoutNodes, newNodePosition } from "../../lib/canvas-layout.ts";
 import { makeClient, isRequestCancelled } from "../../lib/client.ts";
 import { emptyNode, statusLabel, nodeTypeLabel, resourceLabel } from "../../lib/types.ts";
 import { useNodeDrafts } from "../../lib/node-drafts.ts";
@@ -76,7 +77,7 @@ function editResource(item){
   form(item?"编辑资源":"添加资源",[field("projectId","所属项目","select",projectOptions.value),field("name","资源名称"),field("type","类型","select",Object.entries(resourceLabel).map(([value,label])=>({value,label}))),field("url","链接","url"),field("description","说明","textarea")],item||{projectId:projectId.value||data.value.projects[0].id,name:"",type:"document",url:"",description:""},v=>save("resources",v));
 }
 function remove(kind,item){confirmAction("确认删除","删除后无法从页面恢复。删除假设也会删除其关联实验记录。",async()=>{const client=requireApi();await client("/"+kind+"/"+item.id,{method:"DELETE"});await refresh(client);message("已删除");});}
-function addNode(){const h=current.value;if(!h)return;form("添加流程节点",[field("title","节点标题"),field("type","节点类型","select",Object.entries(nodeTypeLabel).map(([value,label])=>({value,label})))],{title:"新的验证节点",type:"experiment"},async v=>{const node={...emptyNode(crypto.randomUUID(),v.title,40+(h.nodes.length%3)*230,40+Math.floor(h.nodes.length/3)*160),type:v.type};await save("hypotheses",{...h,nodes:[...h.nodes,node]});nodeId.value=node.id;});}
+function addNode({width}={}){const h=current.value;if(!h)return;form("添加流程节点",[field("title","节点标题"),field("type","节点类型","select",Object.entries(nodeTypeLabel).map(([value,label])=>({value,label})))],{title:"新的验证节点",type:"experiment"},async v=>{const {x,y}=newNodePosition(h.nodes,width);const node={...emptyNode(crypto.randomUUID(),v.title,x,y),type:v.type};await save("hypotheses",{...h,nodes:[...h.nodes,node]});nodeId.value=node.id;});}
 function saveNode(){
   const h=current.value,n=nodeDraft.value;if(!h||!n)return;
   const submitted=clone(n),parents=[...upstream.value];
@@ -90,7 +91,7 @@ function saveNode(){
 }
 function deleteNode(){const h=current.value,n=selectedNode.value;if(!n)return;confirmAction("删除流程节点","节点和相关连线将被移除，历史实验记录保留。",()=>save("hypotheses",{...h,nodes:h.nodes.filter(i=>i.id!==n.id),edges:h.edges.filter(e=>e.source!==n.id&&e.target!==n.id)}));}
 function moveNode(position){run(()=>save("hypotheses",{...current.value,nodes:current.value.nodes.map(n=>n.id===position.id?{...n,x:position.x,y:position.y}:n)}));}
-function layout(){run(async()=>{const h=current.value,levels=new Map();function level(id,seen=new Set()){if(levels.has(id))return levels.get(id);if(seen.has(id))return 0;seen.add(id);const parents=h.edges.filter(e=>e.target===id).map(e=>e.source);const value=parents.length?Math.max(...parents.map(p=>level(p,new Set(seen))))+1:0;levels.set(id,value);return value;}const rows=new Map();const nodes=h.nodes.map(n=>{const col=level(n.id),row=rows.get(col)||0;rows.set(col,row+1);return {...n,x:40+col*240,y:40+row*150};});await save("hypotheses",{...h,nodes});});}
+function layout({width,complete}){run(async()=>{const h=current.value;if(!h)return;await save("hypotheses",{...h,nodes:layoutNodes(h.nodes,h.edges,width)});await complete?.();});}
 function resultForm(){const h=current.value,n=selectedNode.value;if(!n)return;form("录入实验结果",[field("title","实验标题"),field("status","结果状态","select",statuses),field("duration","实际耗时"),field("summary","结果摘要","textarea")],{nodeId:n.id,title:n.title,status:"pending",duration:"",summary:""},async v=>{const client=requireApi();await client("/hypotheses/"+h.id+"/results",{method:"POST",body:JSON.stringify(v)});await refresh(client);message("实验结果已保存");});}
 function showExperiment(e){modal.value={kind:"detail",title:e.title,record:e};}
 function editExperiment(e){form("编辑实验记录",[field("title","标题"),field("status","状态","select",statuses),field("duration","耗时"),field("summary","摘要","textarea")],e,v=>save("experiments",v),"编辑历史记录不会重新计算流程节点；更新节点结果请使用“录入实验结果”。");}
