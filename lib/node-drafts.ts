@@ -2,7 +2,9 @@ import { computed, ref, watch, type Ref } from 'vue';
 import type { FlowNode, Hypothesis } from './types.ts';
 
 // Coordinates belong to the canvas. Only inspector fields are kept as drafts.
-const fields = ['title', 'type', 'status', 'inputs', 'output', 'summary', 'rationale', 'method', 'conclusion', 'nextAction', 'startedAt', 'duration'] as const;
+const fields = ['title', 'type', 'progress', 'inputs', 'output', 'rationale', 'method', 'conclusion', 'nextAction', 'startedAt', 'resourceIds'] as const;
+const cloneNode = (node: FlowNode): FlowNode => ({ ...node, resourceIds: [...(node.resourceIds || [])] });
+const sameField = (a: unknown, b: unknown) => Array.isArray(a) && Array.isArray(b) ? sameParents(a, b) : a === b;
 const sameParents = (a: string[], b: string[]) => a.length === b.length && a.every(id => b.includes(id));
 const key = (hypothesisId: string, nodeId: string) => JSON.stringify([hypothesisId, nodeId]);
 interface Draft {
@@ -12,7 +14,7 @@ interface Draft {
     baseUpstream: string[];
     conflicts: string[];
 }
-const changed = (draft: Draft) => fields.some(field => draft.node[field] !== draft.baseNode[field]) || !sameParents(draft.upstream, draft.baseUpstream);
+const changed = (draft: Draft) => fields.some(field => !sameField(draft.node[field], draft.baseNode[field])) || !sameParents(draft.upstream, draft.baseUpstream);
 
 export function useNodeDrafts(hypotheses: Ref<Hypothesis[]>, current: Ref<Hypothesis | null>, selected: Ref<FlowNode | null>) {
     const drafts = new Map<string, Draft>();
@@ -25,13 +27,14 @@ export function useNodeDrafts(hypotheses: Ref<Hypothesis[]>, current: Ref<Hypoth
         const id = key(hypothesis.id, node.id);
         const parents = hypothesis.edges.filter(e => e.target === node.id).map(e => e.source);
         const previous = drafts.get(id);
-        const next: Draft = { node: { ...node }, upstream: [...parents], baseNode: { ...node }, baseUpstream: [...parents], conflicts: [] };
+        const next: Draft = { node: cloneNode(node), upstream: [...parents], baseNode: cloneNode(node), baseUpstream: [...parents], conflicts: [] };
         if (previous) {
             for (const field of fields) {
-                if (previous.node[field] === previous.baseNode[field]) continue;
-                // All editable fields are strings; preserve only the fields the user changed.
-                Object.assign(next.node, { [field]: previous.node[field] });
-                if (previous.node[field] !== node[field] && (previous.conflicts.includes(field) || previous.baseNode[field] !== node[field])) next.conflicts.push(field);
+                if (sameField(previous.node[field], previous.baseNode[field])) continue;
+                // Preserve only edited fields, including independent copies of resource references.
+                const value = previous.node[field];
+                Object.assign(next.node, { [field]: Array.isArray(value) ? [...value] : value });
+                if (!sameField(previous.node[field], next.baseNode[field]) && (previous.conflicts.includes(field) || !sameField(previous.baseNode[field], next.baseNode[field]))) next.conflicts.push(field);
             }
             if (!sameParents(previous.upstream, previous.baseUpstream)) {
                 next.upstream = [...previous.upstream];
@@ -51,8 +54,12 @@ export function useNodeDrafts(hypotheses: Ref<Hypothesis[]>, current: Ref<Hypoth
         if (!draft) return;
         // Edits typed while the save was in flight remain unsaved. Server-normalized
         // values replace only the exact submitted values, never newer input.
-        for (const field of fields) if (draft.node[field] === submitted[field]) Object.assign(draft.node, { [field]: saved[field] });
-        draft.baseNode = { ...saved };
+        const normalized = cloneNode(saved);
+        for (const field of fields) if (sameField(draft.node[field], submitted[field])) {
+            const value = normalized[field];
+            Object.assign(draft.node, { [field]: Array.isArray(value) ? [...value] : value });
+        }
+        draft.baseNode = cloneNode(normalized);
         draft.baseUpstream = [...parents];
         draft.conflicts = [];
     }
