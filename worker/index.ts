@@ -1,4 +1,4 @@
-import type { Bindings } from "../lib/server/api.ts";
+import type { Bindings } from "../lib/server/auth.ts";
 import { handleMcp } from "../lib/server/mcp.ts";
 
 interface Env extends Bindings { ASSETS: Fetcher }
