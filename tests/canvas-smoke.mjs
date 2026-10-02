@@ -17,12 +17,23 @@ try {
     page.on('pageerror', error => errors.push(error.message));
     const data = { projects: [{ id: 'p1', name: 'Fixture project', description: '', revision: 1 }], hypotheses: [hypothesis('h1', 'Hypothesis one'), hypothesis('h2', 'Hypothesis two')], experiments: [], resources: [] };
     const writes = [];
-    await page.route('**/api/v1/**', async route => {
-      const request = route.request(), path = new URL(request.url()).pathname;
-      const reply = (value, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(status === 200 ? { data: value } : { error: { message: value } }) });
-      if (path === '/api/v1/workspace' && request.method() === 'GET') return reply(data);
-      if (path.startsWith('/api/v1/hypotheses/') && request.method() === 'PUT') {
-        const payload = request.postDataJSON(), index = data.hypotheses.findIndex(h => h.id === payload.id);
+    await page.route('**/mcp', async route => {
+      const request = route.request(), rpc = request.postDataJSON();
+      assert.equal(request.method(), 'POST');
+      assert.equal(rpc.jsonrpc, '2.0');
+      const result = value => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ jsonrpc: '2.0', id: rpc.id, result: value }) });
+      const reply = (value, status = 200) => {
+        const payload = status === 200 ? { data: value } : { error: { code: status === 409 ? 'REVISION_CONFLICT' : 'VALIDATION_ERROR', message: value }, status };
+        return result({ ...(status === 200 ? {} : { isError: true }), content: [{ type: 'text', text: JSON.stringify(payload) }], structuredContent: payload });
+      };
+      if (rpc.method === 'initialize') return result({ protocolVersion: '2025-11-25', capabilities: { tools: {} }, serverInfo: { name: 'FlowMaster', version: '2.0.0' } });
+      if (rpc.method === 'notifications/initialized') return route.fulfill({ status: 202, body: '' });
+      assert.equal(rpc.method, 'tools/call');
+      const { name, arguments: args } = rpc.params;
+      if (name === 'workspace_get') return reply(data);
+      if (name === 'hypotheses_update') {
+        const payload = args.data, index = data.hypotheses.findIndex(h => h.id === args.id);
+        assert.equal(payload.id, args.id);
         writes.push(payload);
         const parsed = schemas.hypotheses.safeParse(payload);
         if (!parsed.success) return reply(parsed.error.issues.map(issue => issue.message).join('；'), 422);
@@ -30,7 +41,7 @@ try {
         data.hypotheses[index] = { ...parsed.data, id: payload.id, revision: payload.revision + 1 };
         return reply(data.hypotheses[index]);
       }
-      throw new Error('Unexpected isolated canvas request: ' + request.method() + ' ' + path);
+      throw new Error('Unexpected isolated canvas MCP tool: ' + name);
     });
     const choose = async id => { await page.locator('.node').filter({ hasText: `Node ${id}` }).click(); };
     const waitIdle = async () => page.waitForFunction(() => [...document.querySelectorAll('button')].some(b => b.textContent === '保存节点' && !b.disabled));

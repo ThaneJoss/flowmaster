@@ -38,5 +38,4 @@ export const schemas = {
         } })(), "资源链接必须是 HTTP(S) 地址").default(""), description: text })
 };
 export const tokenSchema = z.object({ name: z.string().trim().min(1).max(80), scope: z.enum(["read", "write", "admin"]), expiresInDays: z.number().int().min(1).max(365) });
-export const modelSchema = z.object({ baseUrl: z.string().url().max(2000), model: z.string().trim().min(1).max(120), apiKey: z.string().trim().min(1).max(4096).optional() });
 export const resultSchema = z.object({ nodeId: id, title, status, summary: z.string().trim().min(1).max(16000), duration: z.string().max(100).default("") });

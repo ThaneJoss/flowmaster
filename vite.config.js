@@ -4,5 +4,5 @@ export default defineConfig({
   root: "web",
   plugins: [vue()],
   build: { outDir: "../dist/client", emptyOutDir: true },
-  server: { proxy: { "/api": "http://127.0.0.1:8787" } },
+  server: { proxy: { "/mcp": "http://127.0.0.1:8787" } },
 });

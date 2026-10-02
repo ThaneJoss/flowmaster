@@ -1,20 +1,18 @@
 {
-  "architecture": "Vue 3 + Vite static frontend + standalone Worker API + D1",
-  "status": "draft-awaiting-remote-validation",
-  "localExecution": false,
-  "checksAdded": [
-    "TypeScript backend/client checks",
-    "Existing D1 API integration tests including experiment timing preservation",
-    "Existing client cancellation regression tests",
-    "Vue build artifact check",
-    "Worker routing unit test",
-    "Compiled Worker + Vue assets + isolated D1 smoke test"
+  "architecture": "Vue 3 + Vite static frontend + standalone Worker MCP server + D1",
+  "status": "typecheck-and-build-passed-tests-not-run",
+  "localExecution": true,
+  "change": "Remove built-in LLM configuration and invocation; replace public REST endpoints with authenticated MCP tools at /mcp",
+  "checksRun": [
+    { "command": "pnpm check", "status": "passed" },
+    { "command": "pnpm build", "status": "passed" },
+    { "command": "pnpm exec wrangler deploy --dry-run --outdir .worker-build", "status": "passed" }
   ],
   "notYetVerified": [
-    "Frozen lockfile installation of reconstructed dependency subset",
-    "Vue production compilation",
-    "Browser layout and interactive workflows",
-    "Cloudflare preview deployment"
+    "Unit and integration tests for the MCP migration",
+    "Browser workflows using the MCP client",
+    "External Streamable HTTP MCP client interoperability",
+    "Cloudflare preview or production deployment"
   ],
-  "notes": "Changes prepared through GitHub connector only. No earlier React test result applies to this rewrite."
+  "notes": "Tests were not run, as requested. Type checking, Vue compilation and Worker packaging passed; these are not functional or interoperability tests. Earlier REST/model-integration results do not validate MCP behavior. No remote deployment is claimed."
 }

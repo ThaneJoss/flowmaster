@@ -9,7 +9,7 @@ const browser=await chromium.launch({headless:true});
 const page=await browser.newPage({viewport:{width:1440,height:1000}});
 const errors=[];page.on("pageerror",e=>errors.push(e.message));
 const emptyNode={id:"node1",title:"Smoke node",type:"experiment",status:"pending",x:40,y:40,inputs:"",output:"",summary:"",rationale:"",method:"",conclusion:"",nextAction:"",startedAt:"",duration:""};
-const data={projects:[{id:"project1",name:"Smoke project",description:"Fixture only",revision:1}],hypotheses:[{id:"hypothesis1",projectId:"project1",title:"Smoke hypothesis",description:"No real data",baseline:"test",status:"pending",nodes:[emptyNode],edges:[],revision:1}],experiments:[],resources:[]};
+const data={projects:[{id:"project1",name:"Smoke project",description:"Fixture only",revision:1}],hypotheses:[{id:"hypothesis1",projectId:"project1",title:"Smoke hypothesis",description:"No real data",baseline:"test",status:"pending",nodes:[emptyNode],edges:[],revision:1}],experiments:[{id:"historical1",hypothesisId:"hypothesis1",nodeId:"node1",title:"Historical suggestion",source:"agent",status:"pending",summary:"Retained historical record",duration:"",logs:[],revision:1}],resources:[]};
 const tokenList=[];
 let failNextWorkspace=false,workspaceGate=null;
 async function bounded(promise,label){
@@ -25,24 +25,32 @@ function delayNextWorkspace(){
   workspaceGate={wait,started,completed};
   return {release,requested,finished};
 }
-await page.route("**/api/v1/**",async route=>{
-  const req=route.request(),p=new URL(req.url()).pathname.replace("/api/v1",""),method=req.method();
-  const reply=value=>route.fulfill({status:200,contentType:"application/json",body:JSON.stringify({data:value})});
-  if(!req.headers().authorization)return route.fulfill({status:401,contentType:"application/json",body:JSON.stringify({error:{message:"Unauthorized"}})});
-  if(p==="/workspace"){
-    if(failNextWorkspace){failNextWorkspace=false;return route.fulfill({status:401,contentType:"application/json",body:JSON.stringify({error:{message:"Fixture invalid token"}})});}
+await page.route("**/mcp",async route=>{
+  const req=route.request(),rpc=req.postDataJSON();
+  assert.equal(req.method(),"POST");
+  assert.equal(rpc.jsonrpc,"2.0");
+  const result=value=>route.fulfill({status:200,contentType:"application/json",body:JSON.stringify({jsonrpc:"2.0",id:rpc.id,result:value})});
+  const reply=value=>result({content:[{type:"text",text:JSON.stringify({data:value})}],structuredContent:{data:value}});
+  const failure=(message,status=401)=>{const payload={error:{code:"UNAUTHORIZED",message},status};return result({isError:true,content:[{type:"text",text:JSON.stringify(payload)}],structuredContent:payload});};
+  if(!req.headers().authorization)return route.fulfill({status:401,contentType:"application/json",body:JSON.stringify({jsonrpc:"2.0",id:rpc.id,error:{code:-32001,message:"Unauthorized"}})});
+  if(rpc.method==="initialize")return result({protocolVersion:"2025-11-25",capabilities:{tools:{}},serverInfo:{name:"FlowMaster",version:"2.0.0"}});
+  if(rpc.method==="notifications/initialized")return route.fulfill({status:202,body:""});
+  assert.equal(rpc.method,"tools/call");
+  const {name,arguments:args}=rpc.params;
+  if(name==="workspace_get"){
+    if(failNextWorkspace){failNextWorkspace=false;return failure("Fixture invalid token");}
     const gate=workspaceGate;workspaceGate=null;
     if(gate){gate.started();await gate.wait;try{return await reply(data);}finally{gate.completed();}}
     return reply(data);
   }
-  if(p==="/settings/model")return reply({baseUrl:"https://model.example/v1",model:"fixture",hasKey:false});
-  if(p==="/tokens"&&method==="GET")return reply(tokenList);
-  if(p==="/tokens"&&method==="POST"){const b=req.postDataJSON();const t={...b,id:"token1",prefix:"fm_test",token:"fixture-token-not-real"};tokenList.push(t);return reply(t);}
-  const [kind,id]=p.slice(1).split("/");
-  if(data[kind]&&method==="POST"){const b={...req.postDataJSON(),id:"created-"+Date.now(),revision:1};data[kind].push(b);return reply(b);}
-  if(data[kind]&&method==="PUT"){const b={...req.postDataJSON(),revision:2};data[kind]=data[kind].map(x=>x.id===id?b:x);return reply(b);}
-  if(data[kind]&&method==="DELETE"){data[kind]=data[kind].filter(x=>x.id!==id);return reply({deleted:true});}
-  throw new Error("Unexpected mocked API request: "+method+" "+p);
+  if(name==="tokens_list")return reply(tokenList);
+  if(name==="tokens_create"){const t={...args.data,id:"token1",prefix:"fm_test",token:"fixture-token-not-real"};tokenList.push(t);return reply(t);}
+  if(name==="tokens_revoke"){const index=tokenList.findIndex(t=>t.id===args.id);if(index!==-1)tokenList.splice(index,1);return reply({deleted:true});}
+  const [kind,action]=name.split("_");
+  if(data[kind]&&action==="create"){const b={...args.data,id:"created-"+Date.now(),revision:1};data[kind].push(b);return reply(b);}
+  if(data[kind]&&action==="update"){const b={...args.data,id:args.id,revision:2};data[kind]=data[kind].map(x=>x.id===args.id?b:x);return reply(b);}
+  if(data[kind]&&action==="delete"){data[kind]=data[kind].filter(x=>x.id!==args.id);return reply({deleted:true});}
+  throw new Error("Unexpected mocked MCP tool: "+name);
 });
 try{
   // Unknown fragments, including the old skip-link target, must render a route.
@@ -92,7 +100,7 @@ try{
     await bounded(gate.requested,"Intercepted login request");
     assert.equal(await page.getByRole("dialog").isVisible(),true);
     assert.equal(await page.getByRole("dialog").getByRole("button",{name:"处理中…",exact:true}).isDisabled(),true);
-    const aborted=page.waitForEvent("requestfailed",{predicate:request=>new URL(request.url()).pathname==="/api/v1/workspace"});
+    const aborted=page.waitForEvent("requestfailed",{predicate:request=>new URL(request.url()).pathname==="/mcp"&&request.postDataJSON()?.method==="tools/call"&&request.postDataJSON()?.params?.name==="workspace_get"});
     if(dismiss==="Escape")await page.keyboard.press("Escape");
     else if(dismiss==="Back")await page.goBack();
     else await page.getByRole("dialog").getByRole("button",{name:dismiss,exact:true}).click();
@@ -119,6 +127,14 @@ try{
   await page.getByRole("button",{name:"保存节点",exact:true}).click();
   await page.locator(".node").filter({hasText:"Edited node"}).waitFor();
   assert.equal(data.hypotheses[0].nodes[0].title,"Edited node");
+  await page.locator(".inspector").getByRole("button",{name:"Historical suggestion 历史模型建议",exact:true}).waitFor();
+  assert.equal(await page.getByRole("button",{name:"Agent 分析",exact:true}).count(),0);
+  await page.getByRole("link",{name:"实验记录",exact:true}).click();
+  const historical=page.getByRole("row").filter({hasText:"Historical suggestion"});
+  await historical.getByText("历史模型建议",{exact:false}).waitFor();
+  await historical.getByRole("button",{name:"详情",exact:true}).click();
+  await page.getByRole("dialog").getByText("Retained historical record",{exact:true}).waitFor();
+  await page.getByRole("dialog").getByRole("button",{name:"关闭",exact:true}).click();
 
   await page.getByRole("link",{name:"项目管理",exact:true}).click();
   await page.getByRole("button",{name:"＋ 新建项目",exact:true}).click();
@@ -132,6 +148,7 @@ try{
   mkdirSync("test-results",{recursive:true});
   await page.screenshot({path:"test-results/vue-desktop.png",fullPage:true});
   await page.getByRole("link",{name:"系统设置",exact:true}).click();
+  assert.equal(await page.getByRole("button",{name:"配置模型",exact:true}).count(),0);
   await page.getByRole("button",{name:"创建 Token",exact:true}).click();
   await page.getByRole("dialog").getByLabel("名称",{exact:true}).fill("Fixture token");
   await page.getByRole("dialog").getByRole("button",{name:"保存",exact:true}).click();
@@ -153,7 +170,7 @@ try{
   await page.getByRole("heading",{name:"工作区为空",exact:true}).waitFor();
   assert.equal(await page.evaluate(()=>sessionStorage.getItem("flowmaster.connection")),null);
   assert.deepEqual(errors,[]);
-  console.log("PASS: Chromium login failure/retry, in-flight Cancel/Close/Escape/Back, skip-link routing, desktop/mobile editing and logout with isolated mocked API");
+  console.log("PASS: Chromium MCP login failure/retry, in-flight Cancel/Close/Escape/Back, skip-link routing, historical suggestions, desktop/mobile editing and logout with isolated mocked tools");
 }finally{
   if(errors.length)console.error(errors);
   await browser.close();
