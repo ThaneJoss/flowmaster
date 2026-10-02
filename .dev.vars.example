@@ -1,7 +1,4 @@
-# Generate two DIFFERENT values with: openssl rand -hex 32
+# Generate a local administrator token with: openssl rand -hex 32
 ADMIN_TOKEN=replace-with-a-random-value-at-least-32-characters
-ENCRYPTION_KEY=replace-with-a-different-random-value-at-least-32-characters
-# Comma-separated exact frontend origins. Leave blank when frontend and API share an origin.
+# Comma-separated exact browser origins. Leave blank when frontend and MCP share an origin.
 ALLOWED_ORIGINS=
-# Optional exact model service hostname allowlist, e.g. api.openai.com,api.example.com
-MODEL_ALLOWED_HOSTS=
