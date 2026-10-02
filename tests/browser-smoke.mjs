@@ -11,11 +11,30 @@ const errors=[];page.on("pageerror",e=>errors.push(e.message));
 const emptyNode={id:"node1",title:"Smoke node",type:"experiment",status:"pending",x:40,y:40,inputs:"",output:"",summary:"",rationale:"",method:"",conclusion:"",nextAction:"",startedAt:"",duration:""};
 const data={projects:[{id:"project1",name:"Smoke project",description:"Fixture only",revision:1}],hypotheses:[{id:"hypothesis1",projectId:"project1",title:"Smoke hypothesis",description:"No real data",baseline:"test",status:"pending",nodes:[emptyNode],edges:[],revision:1}],experiments:[],resources:[]};
 const tokenList=[];
+let failNextWorkspace=false,workspaceGate=null;
+async function bounded(promise,label){
+  let timer;
+  try{return await Promise.race([promise,new Promise((_,reject)=>timer=setTimeout(()=>reject(new Error(label+" timed out")),15000))]);}
+  finally{clearTimeout(timer);}
+}
+function delayNextWorkspace(){
+  let release,started,completed;
+  const wait=new Promise(resolve=>release=resolve);
+  const requested=new Promise(resolve=>started=resolve);
+  const finished=new Promise(resolve=>completed=resolve);
+  workspaceGate={wait,started,completed};
+  return {release,requested,finished};
+}
 await page.route("**/api/v1/**",async route=>{
   const req=route.request(),p=new URL(req.url()).pathname.replace("/api/v1",""),method=req.method();
   const reply=value=>route.fulfill({status:200,contentType:"application/json",body:JSON.stringify({data:value})});
   if(!req.headers().authorization)return route.fulfill({status:401,contentType:"application/json",body:JSON.stringify({error:{message:"Unauthorized"}})});
-  if(p==="/workspace")return reply(data);
+  if(p==="/workspace"){
+    if(failNextWorkspace){failNextWorkspace=false;return route.fulfill({status:401,contentType:"application/json",body:JSON.stringify({error:{message:"Fixture invalid token"}})});}
+    const gate=workspaceGate;workspaceGate=null;
+    if(gate){gate.started();await gate.wait;try{return await reply(data);}finally{gate.completed();}}
+    return reply(data);
+  }
   if(p==="/settings/model")return reply({baseUrl:"https://model.example/v1",model:"fixture",hasKey:false});
   if(p==="/tokens"&&method==="GET")return reply(tokenList);
   if(p==="/tokens"&&method==="POST"){const b=req.postDataJSON();const t={...b,id:"token1",prefix:"fm_test",token:"fixture-token-not-real"};tokenList.push(t);return reply(t);}
@@ -26,8 +45,70 @@ await page.route("**/api/v1/**",async route=>{
   throw new Error("Unexpected mocked API request: "+method+" "+p);
 });
 try{
-  await page.goto(origin);
+  // Unknown fragments, including the old skip-link target, must render a route.
+  for(const hash of ["main","not-a-route"]){
+    await page.goto(origin+"/#"+hash);
+    await page.getByRole("heading",{name:"研究工作区",exact:true}).waitFor();
+    await page.getByRole("heading",{name:"工作区为空",exact:true}).waitFor();
+  }
+  await page.getByRole("link",{name:"项目管理",exact:true}).click();
+  await page.getByRole("heading",{name:"项目管理",exact:true}).waitFor();
+  const skip=page.getByRole("link",{name:"跳到内容",exact:true});
+  await skip.focus();await skip.press("Enter");
+  assert.equal(new URL(page.url()).hash,"#projects");
+  assert.equal(await page.evaluate(()=>document.activeElement?.id),"main");
+  await page.getByRole("heading",{name:"项目管理",exact:true}).waitFor();
+  await page.reload();
+  await page.getByRole("heading",{name:"项目管理",exact:true}).waitFor();
+  await page.getByRole("link",{name:"研究工作区",exact:true}).click();
   await page.getByRole("heading",{name:"工作区为空",exact:true}).waitFor();
+
+  // Failed authentication keeps the form and input, and allows a retry.
+  await page.getByRole("button",{name:"管理员登录",exact:true}).click();
+  await page.getByRole("dialog").getByLabel("访问 Token",{exact:true}).fill("fixture-invalid-token");
+  failNextWorkspace=true;
+  await page.getByRole("dialog").getByRole("button",{name:"保存",exact:true}).click();
+  await page.getByRole("dialog").getByText("Fixture invalid token",{exact:true}).waitFor();
+  assert.equal(await page.getByRole("dialog").getByLabel("访问 Token",{exact:true}).inputValue(),"fixture-invalid-token");
+  await page.getByRole("dialog").getByLabel("访问 Token",{exact:true}).fill("fixture-retry-token");
+  await page.getByRole("dialog").getByRole("button",{name:"保存",exact:true}).click();
+  await page.getByRole("dialog").waitFor({state:"hidden"});
+  await page.getByRole("heading",{name:"Smoke hypothesis",exact:true}).waitFor();
+  await page.getByRole("button",{name:"退出",exact:true}).click();
+  await page.getByRole("heading",{name:"工作区为空",exact:true}).waitFor();
+
+  // Closing an in-flight login must abort it and prevent a late reconnection.
+  for(const dismiss of ["取消","关闭","Escape","Back"]){
+    if(dismiss==="Back"){
+      await page.getByRole("link",{name:"项目管理",exact:true}).click();
+      await page.getByRole("heading",{name:"项目管理",exact:true}).waitFor();
+      await page.getByRole("link",{name:"系统设置",exact:true}).click();
+      await page.getByRole("heading",{name:"系统设置",exact:true}).waitFor();
+    }
+    await page.getByRole("button",{name:"管理员登录",exact:true}).click();
+    await page.getByRole("dialog").getByLabel("访问 Token",{exact:true}).fill("fixture-cancelled-token");
+    const gate=delayNextWorkspace();
+    await page.getByRole("dialog").getByRole("button",{name:"保存",exact:true}).click();
+    await bounded(gate.requested,"Intercepted login request");
+    assert.equal(await page.getByRole("dialog").isVisible(),true);
+    assert.equal(await page.getByRole("dialog").getByRole("button",{name:"处理中…",exact:true}).isDisabled(),true);
+    const aborted=page.waitForEvent("requestfailed",{predicate:request=>new URL(request.url()).pathname==="/api/v1/workspace"});
+    if(dismiss==="Escape")await page.keyboard.press("Escape");
+    else if(dismiss==="Back")await page.goBack();
+    else await page.getByRole("dialog").getByRole("button",{name:dismiss,exact:true}).click();
+    await page.getByRole("dialog").waitFor({state:"hidden"});
+    await aborted;
+    gate.release();await bounded(gate.finished,"Cancelled login response teardown");
+    await page.waitForFunction(()=>[...document.querySelectorAll("button")].some(button=>button.textContent==="管理员登录"&&!button.disabled));
+    assert.deepEqual(await page.evaluate(()=>[localStorage.getItem("flowmaster.connection"),sessionStorage.getItem("flowmaster.connection")]),[null,null]);
+    assert.equal(await page.locator(".connection-status").count(),0);
+    if(dismiss==="Back"){
+      assert.equal(new URL(page.url()).hash,"#projects");
+      await page.getByRole("heading",{name:"项目管理",exact:true}).waitFor();
+      await page.getByRole("link",{name:"研究工作区",exact:true}).click();
+    }
+  }
+
   await page.getByRole("button",{name:"管理员登录",exact:true}).click();
   await page.getByRole("dialog").getByLabel("访问 Token",{exact:true}).fill("fixture-admin-token");
   await page.getByRole("dialog").getByRole("button",{name:"保存",exact:true}).click();
@@ -72,7 +153,7 @@ try{
   await page.getByRole("heading",{name:"工作区为空",exact:true}).waitFor();
   assert.equal(await page.evaluate(()=>sessionStorage.getItem("flowmaster.connection")),null);
   assert.deepEqual(errors,[]);
-  console.log("PASS: Chromium desktop/mobile login, node editing, project/resource creation, Token dialog, navigation and logout with isolated mocked API");
+  console.log("PASS: Chromium login failure/retry, in-flight Cancel/Close/Escape/Back, skip-link routing, desktop/mobile editing and logout with isolated mocked API");
 }finally{
   if(errors.length)console.error(errors);
   await browser.close();
