@@ -7,10 +7,20 @@ const viewport = ref(null);
 const zoom = ref(1);
 const drag = ref(null);
 const positions = computed(() => props.hypothesis.nodes.map(n => drag.value?.id === n.id ? { ...n, x: drag.value.x, y: drag.value.y } : n));
-const width = computed(() => Math.max(700, ...positions.value.map(n => n.x + 240)));
-const height = computed(() => Math.max(500, ...positions.value.map(n => n.y + 170)));
+const geometry = computed(() => {
+  const nodesById = new Map();
+  let width = 700, height = 500;
+  for (const node of positions.value) {
+    nodesById.set(node.id, node);
+    width = Math.max(width, node.x + 240);
+    height = Math.max(height, node.y + 170);
+  }
+  return { nodesById, width, height };
+});
+const width = computed(() => geometry.value.width);
+const height = computed(() => geometry.value.height);
 const lines = computed(() => props.hypothesis.edges.map(edge => {
-  const source = positions.value.find(n => n.id === edge.source), target = positions.value.find(n => n.id === edge.target);
+  const source = geometry.value.nodesById.get(edge.source), target = geometry.value.nodesById.get(edge.target);
   if (!source || !target) return null;
   const x1=source.x+185, y1=source.y+52, x2=target.x, y2=target.y+52, bend=Math.max(45, Math.abs(x2-x1)/2);
   return { id: edge.source+"-"+edge.target, d: "M"+x1+","+y1+" C"+(x1+bend)+","+y1+" "+(x2-bend)+","+y2+" "+x2+","+y2 };
