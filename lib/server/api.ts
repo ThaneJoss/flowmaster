@@ -69,12 +69,22 @@ async function authenticate(req: Request, env: Bindings) { if (!env.DB)
     fail(503, "STORAGE_UNAVAILABLE", "尚未绑定 D1 数据库"); if (!env.ADMIN_TOKEN || env.ADMIN_TOKEN.length < 32)
     fail(503, "NOT_CONFIGURED", "请在 Cloudflare 配置至少 32 位 ADMIN_TOKEN"); const token = req.headers.get("Authorization")?.match(/^Bearer (\S+)$/)?.[1]; if (!token || token.length > 4096)
     fail(401, "UNAUTHORIZED", "需要有效的 Bearer Token"); const digest = await hash(token!); const adminHash = await hash(env.ADMIN_TOKEN!); if (digest === adminHash)
-    return { scope: "admin", id: "bootstrap-admin" }; const t = await env.DB.prepare("SELECT id,scope,expires_at FROM access_tokens WHERE hash = ?").bind(digest).first<{
+    return { scope: "admin", id: "bootstrap-admin" }; const t = await env.DB.prepare("SELECT id,scope,expires_at,last_used_at FROM access_tokens WHERE hash = ?").bind(digest).first<{
     id: string;
     scope: string;
     expires_at: string | null;
-}>(); if (!t || t.expires_at && t.expires_at <= now())
-    fail(401, "UNAUTHORIZED", "Token 无效、已过期或已撤销"); await env.DB.prepare("UPDATE access_tokens SET last_used_at = ? WHERE id = ? AND (last_used_at IS NULL OR last_used_at < ?)").bind(now(), t!.id, new Date(Date.now() - 60000).toISOString()).run(); return { scope: t!.scope, id: t!.id }; }
+    last_used_at: string | null;
+}>();
+    const timestamp = Date.now(), stamp = new Date(timestamp).toISOString();
+    if (!t || t.expires_at && t.expires_at <= stamp)
+        fail(401, "UNAUTHORIZED", "Token 无效、已过期或已撤销");
+    const cutoff = new Date(timestamp - 60000).toISOString();
+    // Avoid a database round trip for recently used tokens, while retaining
+    // the SQL guard when concurrent requests both observe a stale timestamp.
+    if (t!.last_used_at === null || t!.last_used_at < cutoff)
+        await env.DB.prepare("UPDATE access_tokens SET last_used_at = ? WHERE id = ? AND (last_used_at IS NULL OR last_used_at < ?)").bind(stamp, t!.id, cutoff).run();
+    return { scope: t!.scope, id: t!.id };
+}
 function requireScope(scope: string, required: "write" | "admin") { if (required === "admin" && scope !== "admin" || required === "write" && scope === "read")
     fail(403, "FORBIDDEN", required === "admin" ? "此操作需要管理员 Token" : "此 Token 仅有只读权限"); }
 async function encryptionKey(env: Bindings) { if (!env.ENCRYPTION_KEY || env.ENCRYPTION_KEY.length < 32)
