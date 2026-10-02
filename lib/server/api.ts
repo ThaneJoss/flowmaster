@@ -132,7 +132,7 @@ async function saveResult(env: Bindings, h: Hypothesis, body: z.infer<typeof res
         fail(422, "NODE_NOT_FOUND", "节点不存在");
     const stamp = now();
     const exp: Experiment = { id: crypto.randomUUID(), updatedAt: stamp, revision: 1, hypothesisId: h.id, nodeId: body.nodeId, title: body.title, status: body.status, summary: body.summary, duration: body.duration, source, logs: [{ time: stamp, message: source === "agent" ? "Agent 分析完成；建议尚待实验验证" : "手动录入实验结果" }, { time: stamp, message: body.summary }] };
-    const updated = { ...h, updatedAt: stamp, revision: (h.revision || 1) + 1, nodes: h.nodes.map(n => n.id === body.nodeId ? { ...n, status: source === "agent" ? n.status : body.status, ...(source === "agent" ? { method: body.summary } : { summary: body.summary }), duration: body.duration, startedAt: stamp } : n) };
+    const updated = { ...h, updatedAt: stamp, revision: (h.revision || 1) + 1, nodes: h.nodes.map(n => n.id === body.nodeId ? { ...n, ...(source === "agent" ? { method: body.summary } : { status: body.status, summary: body.summary, duration: body.duration, startedAt: stamp }) } : n) };
     // D1 executes this batch transactionally. The guarded INSERT runs only when
     // the preceding optimistic UPDATE changed the expected hypothesis revision.
     const result = await env.DB.batch([env.DB.prepare("UPDATE documents SET data = ?, revision = revision + 1, updated_at = ? WHERE id = ? AND kind = 'hypotheses' AND revision = ?").bind(JSON.stringify(updated), stamp, h.id, h.revision || 1), env.DB.prepare("INSERT INTO documents (id,kind,parent_id,data,revision,updated_at) SELECT ?, 'experiments', ?, ?, 1, ? WHERE changes() = 1").bind(exp.id, h.id, JSON.stringify(exp), stamp)]);

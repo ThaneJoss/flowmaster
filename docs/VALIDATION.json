@@ -1,31 +1,20 @@
 {
-  "typescript": "passed",
-  "production_build": "passed",
-  "api_tests": {
-    "passed": 12,
-    "failed": 0
-  },
-  "compiled_worker_smoke": "passed",
-  "wrangler_dry_run": "passed previously; not rerun for this frontend-only change",
-  "browser_qa": {
-    "runtime": "Chromium with compiled local Worker and isolated D1",
-    "status": "passed",
-    "viewport_widths": [320, 390, 700, 768, 1024, 1280, 1440, 1920],
-    "page_errors": 0,
-    "coverage": [
-      "empty initial workspace and all navigation pages",
-      "authentication required before editing; invalid Token stays signed out",
-      "create and persist project and hypothesis",
-      "session restore and remembered login in a new tab",
-      "logout clears visible data and browser credentials, retaining database records",
-      "sample data requires explicit import",
-      "sidebar scrolling, minimap icon sizes and canvas controls",
-      "mobile sidebar and node details",
-      "expired saved credential leaves an empty workspace"
-    ]
-  },
-  "changed_components_eslint": "9 pre-existing errors; no new errors compared with the original components",
-  "live_model_provider": "not tested without user credentials",
-  "deployment": "layout and empty-workspace changes validated locally; not yet published",
-  "visual_reference": "ThaneJoss/webapps @ 63f5342b503f25f0dffce2abbbe6ceb4737dc2e0"
+  "architecture": "Vue 3 + Vite static frontend + standalone Worker API + D1",
+  "status": "draft-awaiting-remote-validation",
+  "localExecution": false,
+  "checksAdded": [
+    "TypeScript backend/client checks",
+    "Existing D1 API integration tests including experiment timing preservation",
+    "Existing client cancellation regression tests",
+    "Vue build artifact check",
+    "Worker routing unit test",
+    "Compiled Worker + Vue assets + isolated D1 smoke test"
+  ],
+  "notYetVerified": [
+    "Frozen lockfile installation of reconstructed dependency subset",
+    "Vue production compilation",
+    "Browser layout and interactive workflows",
+    "Cloudflare preview deployment"
+  ],
+  "notes": "Changes prepared through GitHub connector only. No earlier React test result applies to this rewrite."
 }

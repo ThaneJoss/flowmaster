@@ -23,7 +23,7 @@ test('FlowMaster API: D1, authentication, CRUD, tokens, encryption and model exe
         await t.test('issues tokens once, stores hashes only, enforces read/write/admin', async () => { let r = await call('/tokens', 'POST', { name: 'reader', scope: 'read', expiresInDays: 7 }); assert.equal(r.status, 201); readToken = r.data.token; r = await call('/tokens', 'POST', { name: 'writer', scope: 'write', expiresInDays: 30 }); assert.equal(r.status, 201); writeToken = r.data.token; writeId = r.data.id; assert.equal((await call('/workspace', 'GET', undefined, readToken)).status, 200); assert.equal((await call('/projects', 'POST', { name: 'blocked' }, readToken)).status, 403); assert.equal((await call('/tokens', 'GET', undefined, writeToken)).status, 403); const listed = await call('/tokens'); assert.equal(listed.data[0].token, undefined); const hashes = await env.DB.prepare('SELECT hash FROM access_tokens').all<{
             hash: string;
         }>(); assert.ok(hashes.results.every(r => r.hash.length === 64 && !r.hash.includes('fm_'))); });
-        await t.test('atomically records experiment results and updates a node', async () => { let r = await call(`/hypotheses/${hypothesis.id}/results`, 'POST', { nodeId: 'a', title: 'Measured result', status: 'verified', summary: 'Accuracy: 0.91' }, writeToken); assert.equal(r.status, 201); assert.equal(r.data.duration, ''); r = await call(`/hypotheses/${hypothesis.id}`); assert.equal(r.data.nodes[0].status, 'verified'); assert.equal(r.data.nodes[0].summary, 'Accuracy: 0.91'); hypothesis = r.data; assert.equal((await call(`/hypotheses/${hypothesis.id}/results`, 'POST', { nodeId: 'bad', title: 'bad', status: 'verified', summary: 'no' })).status, 422); });
+        await t.test('atomically records experiment results and updates a node', async () => { let r = await call(`/hypotheses/${hypothesis.id}/results`, 'POST', { nodeId: 'a', title: 'Measured result', status: 'verified', summary: 'Accuracy: 0.91', duration: '12 分钟' }, writeToken); assert.equal(r.status, 201); assert.equal(r.data.duration, '12 分钟'); r = await call(`/hypotheses/${hypothesis.id}`); assert.equal(r.data.nodes[0].status, 'verified'); assert.equal(r.data.nodes[0].summary, 'Accuracy: 0.91'); hypothesis = r.data; assert.equal((await call(`/hypotheses/${hypothesis.id}/results`, 'POST', { nodeId: 'bad', title: 'bad', status: 'verified', summary: 'no' })).status, 422); });
         await t.test('validates, encrypts and redacts provider keys; prevents cross-host key reuse', async () => { let r = await call('/settings/model', 'PUT', { baseUrl: 'http://localhost/v1', model: 'mock', apiKey: 'provider-secret' }); assert.equal(r.status, 422); r = await call('/settings/model', 'PUT', { baseUrl: 'https://model.example/v1', model: 'mock', apiKey: 'provider-secret' }); assert.equal(r.status, 200); assert.equal(r.data.hasKey, true); assert.ok(!JSON.stringify((await call('/settings/model')).data).includes('provider-secret')); const stored = await env.DB.prepare("SELECT value FROM settings WHERE key = 'model'").first<{
             value: string;
         }>(); assert.ok(!stored!.value.includes('provider-secret')); assert.equal((await call('/settings/model', 'GET', undefined, writeToken)).status, 403); const modelEnv = { ...env, MODEL_ALLOWED_HOSTS: '' }; const res = await handleApi(new Request('https://flowmaster.example/api/v1/settings/model', { method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${env.ADMIN_TOKEN}` }, body: JSON.stringify({ baseUrl: 'https://new-model.example/v1', model: 'mock' }) }), modelEnv); assert.equal(res.status, 422); });
@@ -35,10 +35,28 @@ test('FlowMaster API: D1, authentication, CRUD, tokens, encryption and model exe
             r = await call(`/hypotheses/${hypothesis.id}`);
             assert.equal(r.data.nodes[1].status, 'pending');
             assert.match(r.data.nodes[1].method, /验证方案/);
+            assert.equal(r.data.nodes[1].startedAt, '', 'analysis must not invent an experiment start time');
+            assert.equal(r.data.nodes[1].duration, '', 'analysis duration belongs to its log, not an unrun experiment');
         }
         finally {
             globalThis.fetch = originalFetch;
         } });
+        await t.test('Agent analysis preserves measured experiment evidence and timing', async () => {
+            const before = (await call(`/hypotheses/${hypothesis.id}`)).data.nodes.find((node: { id: string }) => node.id === 'a');
+            const originalFetch = globalThis.fetch;
+            globalThis.fetch = (async () => Response.json({ choices: [{ message: { content: '验证方案：补充对照实验。' } }] })) as typeof fetch;
+            try {
+                const result = await call(`/hypotheses/${hypothesis.id}/run`, 'POST', { nodeId: 'a' }, writeToken);
+                assert.equal(result.status, 201);
+                assert.equal(result.data.source, 'agent');
+                assert.equal(result.data.status, 'pending');
+                assert.match(result.data.duration, /秒$/);
+                const after = (await call(`/hypotheses/${hypothesis.id}`)).data.nodes.find((node: { id: string }) => node.id === 'a');
+                assert.deepEqual(after, { ...before, method: '验证方案：补充对照实验。' });
+            } finally {
+                globalThis.fetch = originalFetch;
+            }
+        });
         await t.test('redacts provider errors and rejects invalid input', async () => { const originalFetch = globalThis.fetch; globalThis.fetch = (async () => new Response('secret provider diagnostic', { status: 401 })) as typeof fetch; try {
             const r = await call('/settings/model/test', 'POST');
             assert.equal(r.status, 502);
