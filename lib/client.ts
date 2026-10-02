@@ -3,13 +3,32 @@ export interface Connection {
     token: string;
     remember: boolean;
 }
-// Keep the UI's collection operations local; all requests use MCP tools over /mcp.
+// Compatibility adapter for older integrations. New UI code uses WorkspaceClient.
 export type ApiClient = <T = any>(path: string, options?: RequestInit) => Promise<T>;
 export const isRequestCancelled = (error: unknown) => error instanceof Error && error.name === "AbortError";
 
 const protocolVersion = "2025-11-25";
 interface ToolCall { name: string; arguments: Record<string, unknown> }
-interface ToolPayload { data?: unknown; error?: { message?: string }; status?: number }
+export interface ToolPayload<T = unknown> {
+    data: T;
+    total?: number;
+    affectedHypothesis?: import('./types.ts').Hypothesis;
+    deletedExperimentIds?: string[];
+    error?: { code?: string; message?: string };
+    status?: number;
+}
+export interface CallOptions { signal?: AbortSignal | null }
+export type McpClient = <T>(name: string, args?: Record<string, unknown>, options?: CallOptions) => Promise<ToolPayload<T>>;
+export class McpError extends Error {
+    code?: string;
+    status?: number;
+    constructor(message: string, code?: string, status?: number) {
+        super(message);
+        this.name = 'McpError';
+        this.code = code;
+        this.status = status;
+    }
+}
 interface ToolResult {
     structuredContent?: ToolPayload;
     content?: { type: string; text?: string }[];
@@ -83,7 +102,7 @@ function waitFor<T>(pending: Promise<T>, signal: AbortSignal): Promise<T> {
     });
 }
 
-export function makeClient(connection: Connection, sessionSignal?: AbortSignal): ApiClient {
+export function makeMcpClient(connection: Connection, sessionSignal?: AbortSignal): McpClient {
     const endpoint = endpointFor(connection.baseUrl);
     const token = connection.token;
     let nextId = 0;
@@ -146,10 +165,10 @@ export function makeClient(connection: Connection, sessionSignal?: AbortSignal):
         return initialization;
     }
 
-    return async <T,>(path: string, options: RequestInit = {}) => {
+    return async <T,>(name: string, args: Record<string, unknown> = {}, options: CallOptions = {}) => {
         const signal = requestSignal(options.signal);
         signal.throwIfAborted();
-        const call = toolFor(path, options);
+        const call = { name, arguments: args };
         await waitFor(initialize(), signal);
         signal.throwIfAborted();
         const result = await rpc("tools/call", call, signal) as ToolResult | null;
@@ -161,8 +180,19 @@ export function makeClient(connection: Connection, sessionSignal?: AbortSignal):
                 try { payload = JSON.parse(text) as ToolPayload; } catch { /* Report an invalid tool response below. */ }
             }
         }
-        if (result?.isError || payload?.error) throw new Error(payload?.error?.message || text || "MCP 工具调用失败");
+        if (result?.isError || payload?.error) throw new McpError(payload?.error?.message || text || "MCP 工具调用失败", payload?.error?.code, payload?.status);
         if (!payload || typeof payload !== "object" || !("data" in payload)) throw new Error("服务返回了无效的 MCP 工具结果");
-        return payload.data as T;
+        return payload as ToolPayload<T>;
+    };
+}
+
+/** @deprecated Use makeWorkspaceClient's named business operations. */
+export function makeClient(connection: Connection, sessionSignal?: AbortSignal): ApiClient {
+    const call = makeMcpClient(connection, sessionSignal);
+    return async <T,>(path: string, options: RequestInit = {}) => {
+        options.signal?.throwIfAborted();
+        sessionSignal?.throwIfAborted();
+        const tool = toolFor(path, options);
+        return (await call<T>(tool.name, tool.arguments, options)).data;
     };
 }
