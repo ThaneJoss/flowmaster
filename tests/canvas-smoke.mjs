@@ -9,10 +9,11 @@ const origin = 'http://127.0.0.1:4173';
 const node = (id, title, x = 40, y = 40) => ({ id, title, type: 'experiment', status: 'pending', x, y, inputs: '', output: '', summary: '', rationale: '', method: '', conclusion: '', nextAction: '', startedAt: '', duration: '' });
 const hypothesis = (id, title) => ({ id, projectId: 'p1', title, description: 'Isolated canvas fixture', baseline: '', status: 'pending', revision: 1, nodes: [node('a', 'Node A'), node('b', 'Node B', 280, 40), node('c', 'Node C', 40, 210)], edges: [{ source: 'a', target: 'b' }] });
 const errors = [];
+let activePage;
 try {
   for (const mobile of [false, true]) {
     const context = await browser.newContext({ viewport: mobile ? { width: 390, height: 844 } : { width: 1440, height: 1000 }, hasTouch: mobile, isMobile: mobile });
-    const page = await context.newPage();
+    const page = await context.newPage(); activePage = page;
     page.on('pageerror', error => errors.push(error.message));
     const data = { projects: [{ id: 'p1', name: 'Fixture project', description: '', revision: 1 }], hypotheses: [hypothesis('h1', 'Hypothesis one'), hypothesis('h2', 'Hypothesis two')], experiments: [], resources: [] };
     const writes = [];
@@ -81,16 +82,16 @@ try {
     assert.equal(await page.locator('.inspector .unsaved').count(), 0);
 
     // Add a second parent, then try a genuine cycle through the real validator.
-    await choose('B'); await page.getByLabel('上游节点', { exact: true }).selectOption(['a', 'c']); await save();
+    await choose('B'); await page.getByLabel(/^上游节点/).selectOption(['a', 'c']); await save();
     assert.deepEqual(data.hypotheses[0].edges, [{ source: 'a', target: 'b' }, { source: 'c', target: 'b' }]);
     assert.equal(await page.locator('.canvas svg > path').count(), 2);
     await choose('C'); await page.getByLabel('节点标题', { exact: true }).fill('Rejected cycle draft');
-    await page.getByLabel('上游节点', { exact: true }).selectOption(['b']); await save();
+    await page.getByLabel(/^上游节点/).selectOption(['b']); await save();
     await page.locator('#notice').filter({ hasText: '循环依赖' }).waitFor();
     assert.equal(await page.getByLabel('节点标题', { exact: true }).inputValue(), 'Rejected cycle draft');
     assert.equal(data.hypotheses[0].nodes[2].title, 'Node C');
     assert.equal(data.hypotheses[0].edges.length, 2);
-    await page.getByLabel('上游节点', { exact: true }).selectOption([]); await save();
+    await page.getByLabel(/^上游节点/).selectOption([]); await save();
     assert.equal(data.hypotheses[0].nodes[2].title, 'Rejected cycle draft');
 
     // A stale revision is visible, and a refreshed same-field conflict needs confirmation.
@@ -128,4 +129,8 @@ try {
   }
   assert.deepEqual(errors, []);
   console.log('PASS: desktop/touch canvas drag, keyboard movement, draft switching, layout, edges/DAG errors, revision conflicts and logout');
+} catch (error) {
+  mkdirSync('test-results', { recursive: true });
+  if (activePage && !activePage.isClosed()) await activePage.screenshot({ path: 'test-results/canvas-failure.png', fullPage: true });
+  throw error;
 } finally { await browser.close(); }

@@ -116,3 +116,18 @@ test('deleted nodes do not resurrect old drafts', async () => {
         s.hypotheses.value = [hypothesis('h1')]; await nextTick(); assert.equal(s.nodeDraft.value!.title, 'h1 A');
     } finally { s.scope.stop(); }
 });
+
+test('upstream changes survive navigation and require confirmation after a conflicting refresh', async () => {
+    const s = setup();
+    try {
+        const updated = hypothesis('h1');
+        updated.nodes.push(emptyNode('c', 'C'));
+        updated.edges = [{ source: 'b', target: 'a' }];
+        s.hypotheses.value = [updated]; await nextTick();
+        s.upstream.value = ['c'];
+        s.nodeId.value = 'b'; await nextTick(); s.nodeId.value = 'a'; await nextTick();
+        assert.deepEqual(s.upstream.value, ['c']);
+        s.hypotheses.value = [{ ...updated, edges: [] }]; await nextTick();
+        assert.deepEqual(s.upstream.value, ['c']); assert.equal(s.conflicted.value, true);
+    } finally { s.scope.stop(); }
+});
