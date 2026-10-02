@@ -3,10 +3,10 @@ import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/
 import { CfWorkerJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/cfworker-provider.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
-import { ApiError, authorizeRequest, handleApi, validateOrigin, type Bindings, type Principal } from "./api.ts";
-import { schemas, resultSchema, tokenSchema } from "./validation.ts";
+import { ApiError, authorizeRequest, validateOrigin, type Bindings, type Principal } from "./auth.ts";
+import { schemas, updateSchemas, resultSchema, tokenSchema, idSchema, nodeOperationSchemas } from "./validation.ts";
+import { createWorkspaceService, type ServiceResult } from "./service.ts";
 
-const idSchema = z.string().min(1).max(100).regex(/^[a-zA-Z0-9_-]+$/);
 const pagination = {
     limit: z.number().int().min(1).max(200).optional().describe("Page size; defaults to 50."),
     offset: z.number().int().min(0).optional().describe("Zero-based offset; defaults to 0."),
@@ -14,91 +14,55 @@ const pagination = {
 };
 const maxBodyBytes = 600000;
 
-// Only fixed tool definitions can reach the internal business adapter. This is
-// an in-process call: no HTTP request or credential is sent to another service.
-function createServer(request: Request, env: Bindings, principal: Principal) {
+function createServer(env: Bindings, principal: Principal) {
     const server = new McpServer({ name: "FlowMaster", version: "2.0.0" }, {
         jsonSchemaValidator: new CfWorkerJsonSchemaValidator(),
-        instructions: "Manage a shared research workspace. Read current revisions before updates. Record actual experiment results with results_create. This server does not call models or run experiments.",
+        instructions: "Manage a shared research workspace. Use node operations to edit steps and results_create to record evidence. Step progress and experiment outcome are distinct. Read current revisions before updates. Result corrections/deletions return affectedHypothesis. The server does not call models or run experiments.",
     });
-    const invoke = async (path: string, method = "GET", data?: unknown): Promise<CallToolResult> => {
-        const url = new URL(`/api/v1${path}`, request.url);
-        const internal = new Request(url, {
-            method,
-            headers: { "Content-Type": "application/json" },
-            ...(data === undefined ? {} : { body: JSON.stringify(data) }),
-            signal: request.signal,
-        });
-        const response = await handleApi(internal, env, principal);
-        const payload = await response.json() as Record<string, unknown>;
-        const total = response.headers.get("X-Total-Count");
-        if (total !== null) payload.total = Number(total);
-        if (!response.ok) payload.status = response.status;
-        return {
-            content: [{ type: "text", text: JSON.stringify(payload) }],
-            structuredContent: payload,
-            ...(response.ok ? {} : { isError: true }),
-        };
+    const service = createWorkspaceService(env, principal);
+    const invoke = async (operation: () => Promise<ServiceResult>): Promise<CallToolResult> => {
+        try {
+            const { status: _status, ...payload } = await operation();
+            return { content: [{ type: "text", text: JSON.stringify(payload) }], structuredContent: payload };
+        } catch (error) {
+            const known = error instanceof ApiError ? error : null;
+            if (!known) console.error("FlowMaster operation failure", error instanceof Error ? error.name : "unknown");
+            const payload = { error: { code: known?.code || "INTERNAL_ERROR", message: known?.message || "服务暂时不可用，请稍后重试" }, status: known?.status || 500 };
+            return { content: [{ type: "text", text: JSON.stringify(payload) }], structuredContent: payload, isError: true };
+        }
     };
     const readOnly = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false };
     const create = { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false };
     const update = { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false };
-
-    server.registerTool("workspace_get", {
-        description: "Read the shared workspace snapshot (read permission). For workspaces above 5,000 records or the size limit, use collection list tools.",
-        inputSchema: {}, annotations: readOnly,
-    }, () => invoke("/workspace"));
-    server.registerTool("workspace_seed", {
-        description: "Import example research into an empty workspace only (admin permission). Existing data is never replaced.",
-        inputSchema: {}, annotations: create,
-    }, () => invoke("/seed", "POST"));
-
+    server.registerTool("workspace_get", { description: "Read the workspace snapshot (read permission); use paginated lists above the snapshot size limit.", inputSchema: {}, annotations: readOnly }, () => invoke(service.workspace));
+    server.registerTool("workspace_seed", { description: "Import example research into an empty workspace only (admin permission).", inputSchema: {}, annotations: create }, () => invoke(service.seed));
     for (const collection of ["projects", "hypotheses", "experiments", "resources"] as const) {
-        const listInput = z.object({
-            ...pagination,
-            ...(collection === "hypotheses" || collection === "resources" ? { projectId: idSchema.optional() } : {}),
+        const listInput = z.object({ ...pagination,
+            ...(collection !== "projects" ? { projectId: idSchema.optional() } : {}),
+            ...(collection === "hypotheses" || collection === "experiments" ? { status: z.enum(["pending", "running", "verified", "rejected"]).optional() } : {}),
+            ...(collection === "experiments" ? { hypothesisId: idSchema.optional(), nodeId: idSchema.optional() } : {}),
         }).strict();
-        server.registerTool(`${collection}_list`, {
-            description: `List ${collection} with pagination and optional search (read permission). Returns data and total.`,
-            inputSchema: listInput, annotations: readOnly,
-        }, args => {
-            const query = new URLSearchParams();
-            for (const [key, value] of Object.entries(args)) if (value !== undefined) query.set(key, String(value));
-            return invoke(`/${collection}?${query}`);
-        });
-        server.registerTool(`${collection}_get`, {
-            description: `Read one ${collection} record including its latest revision (read permission).`,
-            inputSchema: { id: idSchema }, annotations: readOnly,
-        }, ({ id }) => invoke(`/${collection}/${id}`));
-        server.registerTool(`${collection}_create`, {
-            description: `Create a ${collection} record (write permission). An omitted record ID is generated by the server.`,
-            inputSchema: { data: schemas[collection] }, annotations: create,
-        }, ({ data }) => invoke(`/${collection}`, "POST", data));
-        server.registerTool(`${collection}_update`, {
-            description: `Replace a ${collection} record (write permission). Supply the full data and its latest revision; stale or missing revisions are rejected.`,
-            inputSchema: { id: idSchema, data: schemas[collection] }, annotations: update,
-        }, ({ id, data }) => invoke(`/${collection}/${id}`, "PUT", data));
-        server.registerTool(`${collection}_delete`, {
-            description: `Delete a ${collection} record (write permission). Projects must be empty; deleting a hypothesis also deletes its experiments.`,
-            inputSchema: { id: idSchema }, annotations: update,
-        }, ({ id }) => invoke(`/${collection}/${id}`, "DELETE"));
+        server.registerTool(`${collection}_list`, { description: `List ${collection} with pagination and filters (read permission). Returns data and total. Experiment order uses fixed recording time.`, inputSchema: listInput, annotations: readOnly }, args => invoke(() => service.list(collection, args)));
+        server.registerTool(`${collection}_get`, { description: `Read one ${collection} record with its revision (read permission).`, inputSchema: { id: idSchema }, annotations: readOnly }, ({ id }) => invoke(() => service.get(collection, id)));
+        server.registerTool(`${collection}_create`, { description: `Create a ${collection} record (write permission). Experiment creation records a manual result and selects it on its node; returns affectedHypothesis.`, inputSchema: { data: schemas[collection] }, annotations: collection === "experiments" ? update : create }, ({ data }) => invoke(() => service.create(collection, data)));
+        server.registerTool(`${collection}_update`, { description: `Update ${collection} fields with its latest revision (write permission). Omitted fields are preserved. Experiment association, source and recording time are fixed. Result changes also return affectedHypothesis.`, inputSchema: { id: idSchema, data: updateSchemas[collection] }, annotations: update }, ({ id, data }) => invoke(() => service.update(collection, id, data)));
+        server.registerTool(`${collection}_delete`, { description: `Delete ${collection} (write permission). Referenced resources and nonempty projects are protected. Hypothesis deletion removes its experiments. Deleting the current result clears the node result; returns affectedHypothesis.`, inputSchema: { id: idSchema }, annotations: update }, ({ id }) => invoke(() => service.remove(collection, id)));
     }
-    server.registerTool("results_create", {
-        description: "Record an actual experiment result and atomically update its hypothesis node (write permission). Does not execute experiments or call models. Do not retry blindly after an uncertain response.",
-        inputSchema: { hypothesisId: idSchema, data: resultSchema }, annotations: update,
-    }, ({ hypothesisId, data }) => invoke(`/hypotheses/${hypothesisId}/results`, "POST", data));
-    server.registerTool("tokens_list", {
-        description: "List access token metadata without token values (admin permission).",
-        inputSchema: {}, annotations: readOnly,
-    }, () => invoke("/tokens"));
-    server.registerTool("tokens_create", {
-        description: "Issue a read, write, or admin access token (admin permission). The token is returned only once; keep it private.",
-        inputSchema: { data: tokenSchema }, annotations: create,
-    }, ({ data }) => invoke("/tokens", "POST", data));
-    server.registerTool("tokens_revoke", {
-        description: "Revoke an access token immediately (admin permission).",
-        inputSchema: { id: idSchema }, annotations: update,
-    }, ({ id }) => invoke(`/tokens/${id}`, "DELETE"));
+    server.registerTool("results_create", { description: "Record an actual experiment result and select it on the node atomically (write permission). Preserve actual startedAt and return affectedHypothesis. Does not run experiments. Do not retry blindly.", inputSchema: { hypothesisId: idSchema, data: resultSchema }, annotations: update }, ({ hypothesisId, data }) => invoke(() => service.createResult(hypothesisId, data)));
+    const nodeDescriptions = {
+        create: "Add a step to a research flow. New steps have no recorded result.",
+        update: "Update step plan fields and optional upstream connections. Result status, summary and duration are owned by experiment records.",
+        move: "Move one step without sending the entire graph.",
+        layout: "Save positions for every step in the current flow; include each node exactly once.",
+        delete: "Delete a step and its edges; preserve editable experiment history and node title snapshots.",
+        select_result: "Select a manual experiment belonging to this step as its current result, or null to clear it. Historical model suggestions cannot become actual results.",
+    };
+    for (const operation of Object.keys(nodeOperationSchemas) as (keyof typeof nodeOperationSchemas)[]) {
+        server.registerTool(`nodes_${operation}`, { description: `${nodeDescriptions[operation]} Requires write permission and current hypothesis revision. Returns the full updated hypothesis.`, inputSchema: nodeOperationSchemas[operation], annotations: update }, (args: unknown) => invoke(() => service.node(operation, args)));
+    }
+    server.registerTool("tokens_list", { description: "List access token metadata, without token values (admin permission).", inputSchema: {}, annotations: readOnly }, () => invoke(service.listTokens));
+    server.registerTool("tokens_create", { description: "Issue a scoped access token (admin permission). The secret is returned once; keep it private.", inputSchema: { data: tokenSchema }, annotations: create }, ({ data }) => invoke(() => service.createToken(data)));
+    server.registerTool("tokens_revoke", { description: "Revoke a token immediately (admin permission).", inputSchema: { id: idSchema }, annotations: update }, ({ id }) => invoke(() => service.revokeToken(id)));
     return server;
 }
 
@@ -177,7 +141,7 @@ export async function handleMcp(request: Request, env: Bindings): Promise<Respon
                 Object.assign(params, { arguments: {} });
             }
         }
-        server = createServer(request, env, principal);
+        server = createServer(env, principal);
         const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true, maxRequestBodySize: maxBodyBytes });
         await server.connect(transport);
         response = await transport.handleRequest(request, { parsedBody: message });
