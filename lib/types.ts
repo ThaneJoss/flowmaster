@@ -1,5 +1,7 @@
 export type Status = "pending" | "running" | "verified" | "rejected";
 export type NodeType = "baseline" | "observation" | "hypothesis" | "experiment" | "conclusion";
+// A readable single-column layout of all 120 nodes needs more than 10,000px.
+export const MAX_NODE_COORDINATE = 30000;
 export interface FlowNode {
     id: string;
     title: string;

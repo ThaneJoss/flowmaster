@@ -30,7 +30,8 @@ p{margin:8px 0 16px}
 .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:16px;margin-bottom:22px}
 .card,.panel{background:white;border:1px solid var(--line);border-radius:14px;padding:20px}
 .metric{font-size:30px;font-weight:700}
-.workspace{display:grid;grid-template-columns:230px minmax(300px,1fr) 290px;gap:16px;align-items:start}
+.workspace{display:grid;grid-template-columns:230px minmax(0,1fr) 290px;gap:16px;align-items:start}
+.workspace>.stack{min-width:0;grid-template-columns:minmax(0,1fr)}
 .list{display:flex;flex-direction:column;gap:8px}
 .item{display:block;width:100%;text-align:left;padding:12px;border:1px solid var(--line);border-radius:9px;background:#fff}
 .item.selected{border-color:var(--blue);background:#f0f5ff}
@@ -48,13 +49,15 @@ form .actions,.actions{display:flex;justify-content:flex-end;gap:8px;margin-top:
 .badge.running{background:#e9f1ff;color:#2563eb}
 .badge.rejected{background:#fcecec;color:#b52d2d}
 .empty{padding:40px 20px;text-align:center;color:var(--muted)}
-.canvas{height:560px;overflow:auto;background-color:#f9fbfe;background-image:radial-gradient(#d5ddeb 1px,transparent 1px);background-size:20px 20px;border:1px solid var(--line);border-radius:10px;touch-action:pan-x pan-y}
+.canvas{height:560px;overflow:auto;scrollbar-gutter:stable;background-color:#f9fbfe;background-image:radial-gradient(#d5ddeb 1px,transparent 1px);background-size:20px 20px;border:1px solid var(--line);border-radius:10px;touch-action:pan-x pan-y}
+.canvas-scaled{overflow:clip}
 .canvas-space{position:relative;transform-origin:0 0}
 .canvas svg{position:absolute;inset:0;pointer-events:none;overflow:visible}
-.node{position:absolute;width:185px;min-height:105px;border:1px solid #cdd8eb;border-radius:12px;background:white;padding:13px;box-shadow:0 3px 9px #18223009;cursor:grab;touch-action:none;user-select:none;text-align:left}
+.node{position:absolute;display:flex;flex-direction:column;align-items:flex-start;gap:6px;width:var(--node-width);height:var(--node-height);border:1px solid #cdd8eb;border-radius:12px;background:white;padding:13px;box-shadow:0 3px 9px #18223009;cursor:grab;touch-action:none;user-select:none;text-align:left}
 .node.selected{border:2px solid var(--blue)}
-.node strong{display:block;margin:5px 0;overflow-wrap:anywhere}
+.node strong{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow:hidden;overflow-wrap:anywhere;line-height:1.45;text-align:left;flex-shrink:0;max-height:4.35em}
 .node small{display:block}
+.node .badge{margin-top:auto}
 .inspector{max-height:760px;overflow:auto}
 .inspector input,.inspector select,.inspector textarea{width:100%}
 .table-wrap{overflow:auto}
@@ -77,7 +80,7 @@ dialog header{height:auto;padding:0;border:0;position:static}
 select[multiple]{height:120px}
 .unsaved{color:#a15b00;font-size:12px}
 .sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}
-@media(max-width:1250px){.workspace{grid-template-columns:210px minmax(260px,1fr)}
+@media(max-width:1250px){.workspace{grid-template-columns:210px minmax(0,1fr)}
 .inspector{grid-column:1/-1;max-height:none}
 .inspector form{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 .inspector .actions{grid-column:1/-1}
@@ -113,6 +116,7 @@ button.active{border-color:#2563eb;color:#2563eb;background:#edf3ff}
 .connection-status{max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .canvas-shell{min-width:0}
 .flow-toolbar{margin-bottom:12px}
+.canvas-notice{display:block;margin-top:6px;color:#a15b00}
 .form-error{color:#b91c1c;background:#fff0f0;padding:10px;border-radius:8px}
 .legend{display:flex;gap:12px;margin:12px 0;color:#68758a}
 .shortcut{font-size:11px;color:#68758a}

@@ -2,17 +2,16 @@
   "architecture": "Vue 3 + Vite static frontend + standalone Worker MCP server + D1",
   "status": "typecheck-and-build-passed-tests-not-run",
   "localExecution": true,
-  "change": "Remove built-in LLM configuration and invocation; replace public REST endpoints with authenticated MCP tools at /mcp",
+  "change": "Wrap canvas layout to viewport width, preserve readable zoom, route edges across rows and place new nodes without overlap",
   "checksRun": [
     { "command": "pnpm check", "status": "passed" },
     { "command": "pnpm build", "status": "passed" },
-    { "command": "pnpm exec wrangler deploy --dry-run --outdir .worker-build", "status": "passed" }
+    { "command": "pnpm deploy:check", "status": "passed" }
   ],
   "notYetVerified": [
-    "Unit and integration tests for the MCP migration",
-    "Browser workflows using the MCP client",
-    "External Streamable HTTP MCP client interoperability",
+    "Unit and integration tests for responsive canvas layout",
+    "Browser verification of desktop and mobile canvas wrapping, zoom and dragging",
     "Cloudflare preview or production deployment"
   ],
-  "notes": "Tests were not run, as requested. Type checking, Vue compilation and Worker packaging passed; these are not functional or interoperability tests. Earlier REST/model-integration results do not validate MCP behavior. No remote deployment is claimed."
+  "notes": "Tests were not run, as requested. Type checking, Vue compilation and Worker packaging passed; these do not replace browser interaction or visual verification. No remote deployment is claimed."
 }
