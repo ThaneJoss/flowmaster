@@ -14,7 +14,7 @@ const data=ref(blank()),connection=ref(null),busy=ref(false),notice=ref(""),moda
 const projectId=ref(""),hypothesisId=ref(""),nodeId=ref(""),search=ref(""),status=ref("");
 const tokens=ref([]),model=ref(null),settingsError=ref(""),nodeDraft=ref(null),upstream=ref([]);
 const nav=[["workspace","研究工作区"],["projects","项目管理"],["experiments","实验记录"],["resources","资源库"],["api","API 文档"],["settings","系统设置"]];
-const route=ref(location.hash.slice(1)||"workspace");
+const route=ref(resolveRoute()),mainElement=ref(null);
 let session=null,api=null,timer;
 const field=(key,label,type="text",options)=>({key,label,type,options});
 const statuses=Object.entries(statusLabel).map(([value,label])=>({value,label}));
@@ -30,27 +30,29 @@ const hypothesisName=id=>data.value.hypotheses.find(h=>h.id===id)?.title||"已�
 const date=value=>value?new Date(value).toLocaleString("zh-CN",{timeZone:"Asia/Shanghai"}):"—";
 const safeUrl=value=>{try{const u=new URL(value);return ["https:","http:"].includes(u.protocol)&&!u.username&&!u.password?u.href:null;}catch{return null;}};
 watch(selectedNode,n=>{nodeDraft.value=n?clone(n):null;upstream.value=current.value?.edges.filter(e=>e.target===n?.id).map(e=>e.source)||[];},{immediate:true});
-watch(route,()=>{search.value="";status.value="";modal.value=null;if(route.value==="settings"&&api)run(loadSettings);});
+watch(route,()=>{search.value="";status.value="";closeModal();if(route.value==="settings"&&api)run(loadSettings);});
 
 function message(text){notice.value=text;clearTimeout(timer);timer=setTimeout(()=>notice.value="",7000);}
 async function run(action){if(busy.value)return;busy.value=true;try{await action();}catch(error){if(!isRequestCancelled(error)){message(error.message||"操作失败");if(modal.value)modal.value.error=error.message;}}finally{busy.value=false;}}
 function requireApi(){if(!api)throw new Error("请先登录工作区");return api;}
 function assertSession(client){if(client!==api)throw new DOMException("Session changed","AbortError");}
 async function refresh(client=requireApi()){assertSession(client);const workspace=await client("/workspace");assertSession(client);data.value=workspace;}
-function forget(){session?.abort();session=null;api=null;connection.value=null;data.value=blank();tokens.value=[];model.value=null;nodeId.value="";hypothesisId.value="";projectId.value="";modal.value=null;localStorage.removeItem("flowmaster.connection");sessionStorage.removeItem("flowmaster.connection");}
+function clearConnection(){session?.abort();session=null;api=null;connection.value=null;data.value=blank();tokens.value=[];model.value=null;nodeId.value="";hypothesisId.value="";projectId.value="";localStorage.removeItem("flowmaster.connection");sessionStorage.removeItem("flowmaster.connection");}
+function forget(){clearConnection();modal.value=null;}
+function closeModal(){if(busy.value&&modal.value?.submit===connect)clearConnection();modal.value=null;}
 async function connect(value){
   let baseUrl=(value.baseUrl||"").trim().replace(/\/$/,"");
   if(baseUrl){const u=new URL(baseUrl);if(u.username||u.password||u.search||u.hash||!(u.protocol==="https:"||u.protocol==="http:"&&["localhost","127.0.0.1"].includes(u.hostname)))throw new Error("服务地址需要 HTTPS，且不能包含账号、查询参数或片段");}
   const c={baseUrl,token:value.token.trim(),remember:!!value.remember};
   if(!c.token)throw new Error("请输入访问 Token");
-  forget();const candidate=new AbortController();session=candidate;api=makeClient(c,candidate.signal);const client=api;
+  clearConnection();const candidate=new AbortController();session=candidate;api=makeClient(c,candidate.signal);const client=api;
   try{await refresh(client);assertSession(client);connection.value=c;(c.remember?localStorage:sessionStorage).setItem("flowmaster.connection",JSON.stringify(c));message("工作区已连接");if(route.value==="settings")await loadSettings();}
-  catch(error){if(session===candidate)forget();throw error;}
+  catch(error){if(session===candidate)clearConnection();throw error;}
 }
 function login(){modal.value={kind:"form",title:"登录工作区",description:"填写 FlowMaster 管理员或访问 Token，不是 Cloudflare API Token。默认仅当前浏览器会话保存。",fields:[field("baseUrl","服务地址（同域留空）","url"),field("token","访问 Token","password"),field("remember","在此设备记住登录","checkbox")],value:{baseUrl:connection.value?.baseUrl||"",token:"",remember:false},submit:connect};}
 function form(title,fields,value,submit,description=""){modal.value={kind:"form",title,fields,value:clone(value),submit,description,error:""};}
 function confirmAction(title,description,submit){modal.value={kind:"confirm",title,description,submit,error:""};}
-async function submitModal(){const m=modal.value;await run(async()=>{await m.submit(m.value);if(modal.value===m)modal.value=null;});}
+async function submitModal(){const m=modal.value;await run(async()=>{m.error="";await m.submit(m.value);if(modal.value===m)modal.value=null;});}
 async function save(kind,item){const client=requireApi();const exists=data.value[kind].some(i=>i.id===item.id);await client("/"+kind+(exists?"/"+item.id:""),{method:exists?"PUT":"POST",body:JSON.stringify(item)});await refresh(client);message("已保存");}
 function editProject(item){form(item?"编辑项目":"新建项目",[field("name","项目名称"),field("description","项目说明","textarea")],item||{name:"",description:""},v=>save("projects",v));}
 function editHypothesis(item){
@@ -82,16 +84,17 @@ function testModel(){confirmAction("测试模型连接","向配置的模型服�
 function createToken(){form("创建访问 Token",[field("name","名称"),field("scope","权限","select",[{value:"read",label:"只读"},{value:"write",label:"读写"},{value:"admin",label:"管理员"}]),field("expiresInDays","有效天数（1–365）","number")],{name:"",scope:"read",expiresInDays:30},async v=>{const client=requireApi();const created=await client("/tokens",{method:"POST",body:JSON.stringify({...v,expiresInDays:Number(v.expiresInDays)})});await loadSettings();assertSession(client);modal.value={kind:"token",title:"请保存新 Token",token:created.token,description:"完整 Token 仅显示这一次。关闭后无法再次查看。"};});}
 function revoke(t){confirmAction("撤销 Token","使用此 Token 的客户端将立即失去访问权限。",async()=>{await requireApi()("/tokens/"+t.id,{method:"DELETE"});await loadSettings();});}
 function seed(){confirmAction("导入示例研究","仅允许向空工作区导入，不会覆盖现有数据。",async()=>{const client=requireApi();await client("/seed",{method:"POST"});await refresh(client);message("示例已导入");});}
-function hashChanged(){const next=location.hash.slice(1);route.value=nav.some(([id])=>id===next)?next:"workspace";}
+function resolveRoute(){const next=location.hash.slice(1);return nav.some(([id])=>id===next)?next:"workspace";}
+function hashChanged(){route.value=resolveRoute();}
 onMounted(()=>{window.addEventListener("hashchange",hashChanged);try{const saved=sessionStorage.getItem("flowmaster.connection")||localStorage.getItem("flowmaster.connection");if(saved)run(()=>connect(JSON.parse(saved)));}catch{forget();}});
 onBeforeUnmount(()=>{session?.abort();clearTimeout(timer);window.removeEventListener("hashchange",hashChanged);});
 </script>
 
 <template>
-<a class="skip" href="#main">跳到内容</a>
+<a class="skip" href="#main" @click.prevent="mainElement?.focus()">跳到内容</a>
 <header><a class="brand" href="#workspace"><span class="logo">F</span>FlowMaster</a><span class="muted">研究流程 · 从假设到证据</span><div id="connection"><span v-if="connection" class="connection-status badge verified">工作区已连接</span><UiButton v-if="connection" @click="run(()=>refresh())" :busy="busy">刷新</UiButton><UiButton v-if="connection" @click="forget">退出</UiButton><UiButton v-else variant="primary" @click="login" :busy="busy">管理员登录</UiButton></div></header>
 <div class="shell"><nav aria-label="主导航"><a v-for="[id,label] in nav" :key="id" :href="'#'+id" :class="{active:route===id}" :aria-current="route===id?'page':undefined">{{label}}</a><small>Vue 3 · Cloudflare Workers</small></nav>
-<main id="main" tabindex="-1">
+<main ref="mainElement" id="main" tabindex="-1">
 <div class="toolbar"><div><h1>{{nav.find(([id])=>id===route)?.[1]}}</h1><p class="muted">以假设组织研究，用真实实验记录验证进展</p></div><div class="row"><UiButton v-if="connection" @click="download(data,'flowmaster-workspace.json')">导出工作区</UiButton></div></div>
 <template v-if="route==='workspace'">
 <div class="cards"><div class="card"><small>研究项目</small><div class="metric">{{data.projects.length}}</div></div><div class="card"><small>研究假设</small><div class="metric">{{data.hypotheses.length}}</div></div><div class="card"><small>已验证假设</small><div class="metric">{{data.hypotheses.filter(h=>h.status==='verified').length}}</div></div><div class="card"><small>实验与分析记录</small><div class="metric">{{data.experiments.length}}</div></div></div>
@@ -121,8 +124,8 @@ POST /settings/model/test</div><p>列表支持 limit、offset、q 和 projectId�
 <template v-else-if="route==='settings'"><div class="stack"><section class="panel"><h2>工作区连接</h2><p>{{connection?'当前连接：'+(connection.baseUrl||'同域 API'):'尚未登录'}}</p><div class="row"><UiButton @click="login" :busy="busy">{{connection?'切换工作区':'登录工作区'}}</UiButton><UiButton v-if="connection" @click="forget">退出并清除凭据</UiButton></div></section><p v-if="settingsError" class="form-error">{{settingsError}}；模型和 Token 管理需要管理员权限</p><template v-if="connection&&!settingsError"><section class="panel"><div class="toolbar"><h2>模型接口</h2><UiButton @click="configureModel" :busy="busy">配置模型</UiButton></div><p>{{model?.model||'未配置模型'}} · {{model?.baseUrl}}</p><p class="muted">{{model?.hasKey?'Key 已在服务端加密保存':'尚未保存 Key'}}</p><UiButton @click="testModel" :busy="busy||!model?.hasKey">测试连接</UiButton></section><section class="panel"><div class="toolbar"><h2>访问 Token</h2><UiButton @click="createToken" :busy="busy">创建 Token</UiButton></div><div class="table-wrap"><table><thead><tr><th>名称</th><th>前缀</th><th>权限</th><th>到期时间</th><th></th></tr></thead><tbody><tr v-for="t in tokens" :key="t.id"><td>{{t.name}}</td><td>{{t.prefix}}…</td><td>{{t.scope}}</td><td>{{date(t.expiresAt)}}</td><td><UiButton variant="danger" @click="revoke(t)" :busy="busy">撤销</UiButton></td></tr></tbody></table></div></section><section class="panel"><h2>示例研究</h2><p>可选，仅在空工作区中导入示例。</p><UiButton @click="seed" :busy="busy">导入示例</UiButton></section></template></div></template>
 </main></div>
 <div id="notice" role="status" aria-live="polite">{{notice}}</div>
-<UiModal v-if="modal" :title="modal.title" :busy="busy" @close="modal=null"><p v-if="modal.description" class="muted">{{modal.description}}</p><p v-if="modal.error" class="form-error">{{modal.error}}</p>
-<form v-if="modal.kind==='form'" @submit.prevent="submitModal"><UiField v-for="f in modal.fields" :key="f.key" :label="f.label"><textarea v-if="f.type==='textarea'" v-model="modal.value[f.key]" maxlength="16000"/><select v-else-if="f.type==='select'" v-model="modal.value[f.key]"><option v-for="o in f.options" :key="o.value" :value="o.value">{{o.label}}</option></select><input v-else-if="f.type==='checkbox'" v-model="modal.value[f.key]" type="checkbox"><input v-else v-model="modal.value[f.key]" :type="f.type" :autocomplete="f.type==='password'?'new-password':'off'" :maxlength="f.type==='password'?4096:f.type==='url'?2000:200" :min="f.type==='number'?1:undefined" :max="f.type==='number'?365:undefined" :required="['name','title','token','model'].includes(f.key)"></UiField><div class="actions"><UiButton type="button" @click="modal=null" :busy="busy">取消</UiButton><UiButton type="submit" variant="primary" :busy="busy">{{busy?'处理中…':'保存'}}</UiButton></div></form>
+<UiModal v-if="modal" :title="modal.title" :busy="busy&&modal.submit!==connect" @close="closeModal"><p v-if="modal.description" class="muted">{{modal.description}}</p><p v-if="modal.error" class="form-error">{{modal.error}}</p>
+<form v-if="modal.kind==='form'" @submit.prevent="submitModal"><UiField v-for="f in modal.fields" :key="f.key" :label="f.label"><textarea v-if="f.type==='textarea'" v-model="modal.value[f.key]" maxlength="16000"/><select v-else-if="f.type==='select'" v-model="modal.value[f.key]"><option v-for="o in f.options" :key="o.value" :value="o.value">{{o.label}}</option></select><input v-else-if="f.type==='checkbox'" v-model="modal.value[f.key]" type="checkbox"><input v-else v-model="modal.value[f.key]" :type="f.type" :autocomplete="f.type==='password'?'new-password':'off'" :maxlength="f.type==='password'?4096:f.type==='url'?2000:200" :min="f.type==='number'?1:undefined" :max="f.type==='number'?365:undefined" :required="['name','title','token','model'].includes(f.key)"></UiField><div class="actions"><UiButton type="button" @click="closeModal" :busy="busy&&modal.submit!==connect">取消</UiButton><UiButton type="submit" variant="primary" :busy="busy">{{busy?'处理中…':'保存'}}</UiButton></div></form>
 <div v-else-if="modal.kind==='confirm'" class="actions"><UiButton @click="modal=null" :busy="busy">取消</UiButton><UiButton variant="primary" @click="submitModal" :busy="busy">确认</UiButton></div>
 <div v-else-if="modal.kind==='detail'"><span class="badge" :class="modal.record.status">{{statusLabel[modal.record.status]}}</span><p class="log">{{modal.record.summary}}</p><h3>执行日志</h3><p v-for="(log,index) in modal.record.logs" :key="index" class="log"><small>{{log.time}}</small><br>{{log.message}}</p><UiButton @click="download(modal.record,'experiment.json')">导出此记录</UiButton></div>
 <div v-else-if="modal.kind==='token'"><textarea readonly :value="modal.token" aria-label="新建 Token"/><div class="actions"><UiButton @click="modal=null">我已保存，关闭</UiButton></div></div>
