@@ -6,13 +6,14 @@ import UiModal from "./components/UiModal.vue";
 import FlowCanvas from "./components/FlowCanvas.vue";
 import { makeClient, isRequestCancelled } from "../../lib/client.ts";
 import { emptyNode, statusLabel, nodeTypeLabel, resourceLabel } from "../../lib/types.ts";
+import { useNodeDrafts } from "../../lib/node-drafts.ts";
 
 const clone=value=>JSON.parse(JSON.stringify(value));
 const openProject=id=>{projectId.value=id;location.hash="workspace";};
 const blank=()=>({projects:[],hypotheses:[],experiments:[],resources:[]});
 const data=ref(blank()),connection=ref(null),busy=ref(false),notice=ref(""),modal=ref(null);
 const projectId=ref(""),hypothesisId=ref(""),nodeId=ref(""),search=ref(""),status=ref("");
-const tokens=ref([]),model=ref(null),settingsError=ref(""),nodeDraft=ref(null),upstream=ref([]);
+const tokens=ref([]),model=ref(null),settingsError=ref("");
 const nav=[["workspace","研究工作区"],["projects","项目管理"],["experiments","实验记录"],["resources","资源库"],["api","API 文档"],["settings","系统设置"]];
 const route=ref(resolveRoute()),mainElement=ref(null);
 let session=null,api=null,timer;
@@ -29,7 +30,7 @@ const projectName=id=>data.value.projects.find(p=>p.id===id)?.name||"未知项�
 const hypothesisName=id=>data.value.hypotheses.find(h=>h.id===id)?.title||"已删除的假设";
 const date=value=>value?new Date(value).toLocaleString("zh-CN",{timeZone:"Asia/Shanghai"}):"—";
 const safeUrl=value=>{try{const u=new URL(value);return ["https:","http:"].includes(u.protocol)&&!u.username&&!u.password?u.href:null;}catch{return null;}};
-watch(selectedNode,n=>{nodeDraft.value=n?clone(n):null;upstream.value=current.value?.edges.filter(e=>e.target===n?.id).map(e=>e.source)||[];},{immediate:true});
+const {nodeDraft,upstream,dirty:nodeDirty,conflicted:nodeConflicted,clear:clearNodeDrafts,acknowledge:acknowledgeNode}=useNodeDrafts(computed(()=>data.value.hypotheses),current,selectedNode);
 watch(route,()=>{search.value="";status.value="";closeModal();if(route.value==="settings"&&api)run(loadSettings);});
 
 function message(text){notice.value=text;clearTimeout(timer);timer=setTimeout(()=>notice.value="",7000);}
@@ -37,7 +38,7 @@ async function run(action){if(busy.value)return;busy.value=true;try{await action
 function requireApi(){if(!api)throw new Error("请先登录工作区");return api;}
 function assertSession(client){if(client!==api)throw new DOMException("Session changed","AbortError");}
 async function refresh(client=requireApi()){assertSession(client);const workspace=await client("/workspace");assertSession(client);data.value=workspace;}
-function clearConnection(){session?.abort();session=null;api=null;connection.value=null;data.value=blank();tokens.value=[];model.value=null;nodeId.value="";hypothesisId.value="";projectId.value="";localStorage.removeItem("flowmaster.connection");sessionStorage.removeItem("flowmaster.connection");}
+function clearConnection(){clearNodeDrafts();session?.abort();session=null;api=null;connection.value=null;data.value=blank();tokens.value=[];model.value=null;nodeId.value="";hypothesisId.value="";projectId.value="";localStorage.removeItem("flowmaster.connection");sessionStorage.removeItem("flowmaster.connection");}
 function forget(){clearConnection();modal.value=null;}
 function closeModal(){if(busy.value&&modal.value?.submit===connect)clearConnection();modal.value=null;}
 async function connect(value){
@@ -65,7 +66,17 @@ function editResource(item){
 }
 function remove(kind,item){confirmAction("确认删除","删除后无法从页面恢复。删除假设也会删除其关联实验记录。",async()=>{const client=requireApi();await client("/"+kind+"/"+item.id,{method:"DELETE"});await refresh(client);message("已删除");});}
 function addNode(){const h=current.value;if(!h)return;form("添加流程节点",[field("title","节点标题"),field("type","节点类型","select",Object.entries(nodeTypeLabel).map(([value,label])=>({value,label})))],{title:"新的验证节点",type:"experiment"},async v=>{const node={...emptyNode(crypto.randomUUID(),v.title,40+(h.nodes.length%3)*230,40+Math.floor(h.nodes.length/3)*160),type:v.type};await save("hypotheses",{...h,nodes:[...h.nodes,node]});nodeId.value=node.id;});}
-async function saveNode(){const h=current.value,n=nodeDraft.value;if(!h||!n)return;await save("hypotheses",{...h,nodes:h.nodes.map(i=>i.id===n.id?clone(n):i),edges:[...h.edges.filter(e=>e.target!==n.id),...upstream.value.map(source=>({source,target:n.id}))]});}
+function saveNode(){
+  const h=current.value,n=nodeDraft.value;if(!h||!n)return;
+  const submitted=clone(n),parents=[...upstream.value];
+  const commit=async()=>{
+    const client=requireApi();
+    const saved=await client("/hypotheses/"+h.id,{method:"PUT",body:JSON.stringify({...h,nodes:h.nodes.map(i=>i.id===submitted.id?submitted:i),edges:[...h.edges.filter(e=>e.target!==submitted.id),...parents.map(source=>({source,target:submitted.id}))]})});
+    assertSession(client);acknowledgeNode(h.id,submitted,parents,saved.nodes.find(i=>i.id===submitted.id));await refresh(client);message("节点已保存");
+  };
+  if(nodeConflicted.value){confirmAction("确认覆盖冲突字段","服务端也修改了你的草稿字段。确认后使用当前草稿覆盖这些字段；取消可继续核对。",commit);return;}
+  return commit();
+}
 function deleteNode(){const h=current.value,n=selectedNode.value;if(!n)return;confirmAction("删除流程节点","节点和相关连线将被移除，历史实验记录保留。",()=>save("hypotheses",{...h,nodes:h.nodes.filter(i=>i.id!==n.id),edges:h.edges.filter(e=>e.source!==n.id&&e.target!==n.id)}));}
 function moveNode(position){run(()=>save("hypotheses",{...current.value,nodes:current.value.nodes.map(n=>n.id===position.id?{...n,x:position.x,y:position.y}:n)}));}
 function layout(){run(async()=>{const h=current.value,levels=new Map();function level(id,seen=new Set()){if(levels.has(id))return levels.get(id);if(seen.has(id))return 0;seen.add(id);const parents=h.edges.filter(e=>e.target===id).map(e=>e.source);const value=parents.length?Math.max(...parents.map(p=>level(p,new Set(seen))))+1:0;levels.set(id,value);return value;}const rows=new Map();const nodes=h.nodes.map(n=>{const col=level(n.id),row=rows.get(col)||0;rows.set(col,row+1);return {...n,x:40+col*240,y:40+row*150};});await save("hypotheses",{...h,nodes});});}
@@ -103,7 +114,7 @@ onBeforeUnmount(()=>{session?.abort();clearTimeout(timer);window.removeEventList
 <aside class="panel"><div class="toolbar"><h2>假设列表</h2><UiButton @click="editHypothesis()" :busy="busy">＋</UiButton></div><select v-model="projectId" aria-label="筛选项目"><option value="">全部项目</option><option v-for="p in data.projects" :key="p.id" :value="p.id">{{p.name}}</option></select><input v-model="search" placeholder="搜索假设" aria-label="搜索假设"><select v-model="status" aria-label="筛选假设状态"><option value="">全部状态</option><option v-for="s in statuses" :value="s.value" :key="s.value">{{s.label}}</option></select><div class="list"><button v-for="h in hypotheses" :key="h.id" class="item" :class="{selected:current?.id===h.id}" @click="hypothesisId=h.id;nodeId=''"><strong>{{h.title}}</strong><small>{{projectName(h.projectId)}}</small><br><span class="badge" :class="h.status">{{statusLabel[h.status]}}</span></button><p v-if="!hypotheses.length" class="empty">暂无假设</p></div><UiButton @click="editProject()" :busy="busy">新建项目</UiButton></aside>
 <div v-if="current" class="stack"><section class="panel"><div class="toolbar"><div><h2>{{current.title}}</h2><small>{{projectName(current.projectId)}} · 基线：{{current.baseline||'未填写'}}</small></div><div class="row"><UiButton @click="editHypothesis(current)" :busy="busy">编辑</UiButton><UiButton variant="danger" @click="remove('hypotheses',current)" :busy="busy">删除</UiButton></div></div><p>{{current.description}}</p></section><FlowCanvas :key="current.id" :hypothesis="current" :selected-id="nodeId" :busy="busy" @select="nodeId=$event" @move="moveNode" @add="addNode" @layout="layout"/></div>
 <section v-else class="panel empty"><h2>开始你的研究流程</h2><p>先创建项目，再添加假设与验证节点</p></section>
-<aside v-if="nodeDraft&&current" class="panel inspector"><h2>节点详情</h2><form @submit.prevent="run(saveNode)"><UiField label="节点标题"><input v-model="nodeDraft.title" required maxlength="200"></UiField><UiField label="节点类型"><select v-model="nodeDraft.type"><option v-for="(label,value) in nodeTypeLabel" :value="value" :key="value">{{label}}</option></select></UiField><UiField label="状态"><select v-model="nodeDraft.status"><option v-for="s in statuses" :value="s.value" :key="s.value">{{s.label}}</option></select></UiField><UiField v-for="[key,label] in nodeFields" :key="key" :label="label"><textarea v-model="nodeDraft[key]" maxlength="16000"/></UiField><UiField label="实验开始时间"><input v-model="nodeDraft.startedAt" maxlength="100"></UiField><UiField label="实际耗时"><input v-model="nodeDraft.duration" maxlength="100"></UiField><UiField label="上游节点" hint="按住 Ctrl / Command 可多选，服务端会拒绝循环依赖"><select v-model="upstream" multiple><option v-for="n in current.nodes.filter(n=>n.id!==nodeDraft.id)" :value="n.id" :key="n.id">{{n.title}}</option></select></UiField><div class="actions"><UiButton type="submit" variant="primary" :busy="busy">保存节点</UiButton></div></form><div class="actions"><UiButton @click="resultForm" :busy="busy">录入实验结果</UiButton><UiButton @click="analyze" :busy="busy">Agent 分析</UiButton><UiButton variant="danger" @click="deleteNode" :busy="busy">删除节点</UiButton></div><hr><h3>该节点的实验记录</h3><button v-for="e in data.experiments.filter(e=>e.hypothesisId===current.id&&e.nodeId===nodeId)" :key="e.id" class="item" @click="showExperiment(e)">{{e.title}} <span class="badge">{{e.source==='agent'?'模型建议':'真实录入'}}</span></button></aside>
+<aside v-if="nodeDraft&&current" class="panel inspector"><h2>节点详情</h2><p v-if="nodeDirty" class="unsaved" role="status">有未保存的修改；切换节点或假设会保留，刷新页面或退出后丢失</p><p v-if="nodeConflicted" class="form-error">服务端内容已变化，请核对草稿中的冲突字段后再保存</p><form @submit.prevent="run(saveNode)"><UiField label="节点标题"><input v-model="nodeDraft.title" required maxlength="200"></UiField><UiField label="节点类型"><select v-model="nodeDraft.type"><option v-for="(label,value) in nodeTypeLabel" :value="value" :key="value">{{label}}</option></select></UiField><UiField label="状态"><select v-model="nodeDraft.status"><option v-for="s in statuses" :value="s.value" :key="s.value">{{s.label}}</option></select></UiField><UiField v-for="[key,label] in nodeFields" :key="key" :label="label"><textarea v-model="nodeDraft[key]" maxlength="16000"/></UiField><UiField label="实验开始时间"><input v-model="nodeDraft.startedAt" maxlength="100"></UiField><UiField label="实际耗时"><input v-model="nodeDraft.duration" maxlength="100"></UiField><UiField label="上游节点" hint="按住 Ctrl / Command 可多选，服务端会拒绝循环依赖"><select v-model="upstream" multiple><option v-for="n in current.nodes.filter(n=>n.id!==nodeDraft.id)" :value="n.id" :key="n.id">{{n.title}}</option></select></UiField><div class="actions"><UiButton type="submit" variant="primary" :busy="busy">保存节点</UiButton></div></form><div class="actions"><UiButton @click="resultForm" :busy="busy">录入实验结果</UiButton><UiButton @click="analyze" :busy="busy">Agent 分析</UiButton><UiButton variant="danger" @click="deleteNode" :busy="busy">删除节点</UiButton></div><hr><h3>该节点的实验记录</h3><button v-for="e in data.experiments.filter(e=>e.hypothesisId===current.id&&e.nodeId===nodeId)" :key="e.id" class="item" @click="showExperiment(e)">{{e.title}} <span class="badge">{{e.source==='agent'?'模型建议':'真实录入'}}</span></button></aside>
 <aside v-else class="panel empty">选择一个节点查看详情</aside>
 </div>
 </template>
