@@ -1,9 +1,11 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import UiButton from "./components/UiButton.vue";
 import UiField from "./components/UiField.vue";
 import UiModal from "./components/UiModal.vue";
 import FlowCanvas from "./components/FlowCanvas.vue";
+import NodeOverview from "./components/NodeOverview.vue";
+import NodeDrawer from "./components/NodeDrawer.vue";
 import { layoutNodes, newNodePosition } from "../../lib/canvas-layout.ts";
 import { makeClient, isRequestCancelled } from "../../lib/client.ts";
 import { emptyNode, statusLabel, nodeTypeLabel, resourceLabel } from "../../lib/types.ts";
@@ -17,6 +19,8 @@ const projectId=ref(""),hypothesisId=ref(""),nodeId=ref(""),search=ref(""),statu
 const tokens=ref([]),settingsError=ref("");
 const nav=[["workspace","研究工作区"],["projects","项目管理"],["experiments","实验记录"],["resources","资源库"],["mcp","MCP 文档"],["settings","系统设置"]];
 const route=ref(resolveRoute()),mainElement=ref(null);
+const sidebarOpen=ref(!window.matchMedia("(max-width: 760px)").matches),focused=ref(false),inspectorOpen=ref(false),editingNode=ref(false);
+let sidebarBeforeFocus=sidebarOpen.value;
 let session=null,api=null,timer;
 const field=(key,label,type="text",options)=>({key,label,type,options});
 const statuses=Object.entries(statusLabel).map(([value,label])=>({value,label}));
@@ -43,14 +47,25 @@ const date=value=>value?new Date(value).toLocaleString("zh-CN",{timeZone:"Asia/S
 const safeUrl=value=>{try{const u=new URL(value);return ["https:","http:"].includes(u.protocol)&&!u.username&&!u.password?u.href:null;}catch{return null;}};
 const {nodeDraft,upstream,dirty:nodeDirty,conflicted:nodeConflicted,clear:clearNodeDrafts,acknowledge:acknowledgeNode}=useNodeDrafts(computed(()=>data.value.hypotheses),current,selectedNode);
 const upstreamOptions=computed(()=>current.value?.nodes.filter(n=>n.id!==nodeDraft.value?.id)||[]);
-watch(route,()=>{search.value="";status.value="";closeModal();if(route.value==="settings"&&api)run(loadSettings);});
+watch(route,()=>{focused.value=false;inspectorOpen.value=false;search.value="";status.value="";closeModal();if(route.value==="settings"&&api)run(loadSettings);});
+watch(()=>current.value?.id,()=>{nodeId.value="";inspectorOpen.value=false;editingNode.value=false;});
+watch(focused,(value,previous)=>{if(value){sidebarBeforeFocus=sidebarOpen.value;sidebarOpen.value=false;}else if(previous)sidebarOpen.value=sidebarBeforeFocus;});
+watch(()=>selectedNode.value?.id,()=>{editingNode.value=false;if(!selectedNode.value)inspectorOpen.value=false;});
+
+function selectHypothesis(id){hypothesisId.value=id;nodeId.value="";inspectorOpen.value=false;if(window.matchMedia("(max-width: 760px)").matches)sidebarOpen.value=false;}
+function openInspector(id){if(nodeId.value!==id)editingNode.value=false;nodeId.value=id;inspectorOpen.value=true;}
+function closeInspector(){inspectorOpen.value=false;}
+function selectedNodeElement(){return nodeId.value?mainElement.value?.querySelector('[data-node-id="'+CSS.escape(nodeId.value)+'"]'):null;}
+function showDescription(){modal.value={kind:"description",title:"研究说明",subject:current.value.title,text:current.value.description};}
+async function toggleFocus(value){focused.value=value;await nextTick();mainElement.value?.querySelector(".focus-toggle")?.focus();}
+function workspaceKeydown(event){if(event.key!=="Escape"||modal.value||document.querySelector("dialog[open]"))return;if(focused.value){event.preventDefault();toggleFocus(false);}}
 
 function message(text){notice.value=text;clearTimeout(timer);timer=setTimeout(()=>notice.value="",7000);}
 async function run(action){if(busy.value)return;busy.value=true;try{await action();}catch(error){if(!isRequestCancelled(error)){message(error.message||"操作失败");if(modal.value)modal.value.error=error.message;}}finally{busy.value=false;}}
 function requireApi(){if(!api)throw new Error("请先登录工作区");return api;}
 function assertSession(client){if(client!==api)throw new DOMException("Session changed","AbortError");}
 async function refresh(client=requireApi()){assertSession(client);const workspace=await client("/workspace");assertSession(client);data.value=workspace;}
-function clearConnection(){clearNodeDrafts();session?.abort();session=null;api=null;connection.value=null;data.value=blank();tokens.value=[];nodeId.value="";hypothesisId.value="";projectId.value="";localStorage.removeItem("flowmaster.connection");sessionStorage.removeItem("flowmaster.connection");}
+function clearConnection(){clearNodeDrafts();session?.abort();session=null;api=null;connection.value=null;data.value=blank();tokens.value=[];nodeId.value="";hypothesisId.value="";projectId.value="";inspectorOpen.value=false;focused.value=false;localStorage.removeItem("flowmaster.connection");sessionStorage.removeItem("flowmaster.connection");}
 function forget(){clearConnection();modal.value=null;}
 function closeModal(){if(busy.value&&modal.value?.submit===connect)clearConnection();modal.value=null;}
 async function connect(value){
@@ -77,7 +92,7 @@ function editResource(item){
   form(item?"编辑资源":"添加资源",[field("projectId","所属项目","select",projectOptions.value),field("name","资源名称"),field("type","类型","select",Object.entries(resourceLabel).map(([value,label])=>({value,label}))),field("url","链接","url"),field("description","说明","textarea")],item||{projectId:projectId.value||data.value.projects[0].id,name:"",type:"document",url:"",description:""},v=>save("resources",v));
 }
 function remove(kind,item){confirmAction("确认删除","删除后无法从页面恢复。删除假设也会删除其关联实验记录。",async()=>{const client=requireApi();await client("/"+kind+"/"+item.id,{method:"DELETE"});await refresh(client);message("已删除");});}
-function addNode({width}={}){const h=current.value;if(!h)return;form("添加流程节点",[field("title","节点标题"),field("type","节点类型","select",Object.entries(nodeTypeLabel).map(([value,label])=>({value,label})))],{title:"新的验证节点",type:"experiment"},async v=>{const {x,y}=newNodePosition(h.nodes,width);const node={...emptyNode(crypto.randomUUID(),v.title,x,y),type:v.type};await save("hypotheses",{...h,nodes:[...h.nodes,node]});nodeId.value=node.id;});}
+function addNode({width}={}){const h=current.value;if(!h)return;form("添加流程节点",[field("title","节点标题"),field("type","节点类型","select",Object.entries(nodeTypeLabel).map(([value,label])=>({value,label})))],{title:"新的验证节点",type:"experiment"},async v=>{const {x,y}=newNodePosition(h.nodes,width);const node={...emptyNode(crypto.randomUUID(),v.title,x,y),type:v.type};await save("hypotheses",{...h,nodes:[...h.nodes,node]});if(current.value?.id===h.id)nodeId.value=node.id;});}
 function saveNode(){
   const h=current.value,n=nodeDraft.value;if(!h||!n)return;
   const submitted=clone(n),parents=[...upstream.value];
@@ -94,7 +109,7 @@ function moveNode(position){run(()=>save("hypotheses",{...current.value,nodes:cu
 function layout({width,complete}){run(async()=>{const h=current.value;if(!h)return;await save("hypotheses",{...h,nodes:layoutNodes(h.nodes,h.edges,width)});await complete?.();});}
 function resultForm(){const h=current.value,n=selectedNode.value;if(!n)return;form("录入实验结果",[field("title","实验标题"),field("status","结果状态","select",statuses),field("duration","实际耗时"),field("summary","结果摘要","textarea")],{nodeId:n.id,title:n.title,status:"pending",duration:"",summary:""},async v=>{const client=requireApi();await client("/hypotheses/"+h.id+"/results",{method:"POST",body:JSON.stringify(v)});await refresh(client);message("实验结果已保存");});}
 function showExperiment(e){modal.value={kind:"detail",title:e.title,record:e};}
-function editExperiment(e){form("编辑实验记录",[field("title","标题"),field("status","状态","select",statuses),field("duration","耗时"),field("summary","摘要","textarea")],e,v=>save("experiments",v),"编辑历史记录不会重新计算流程节点；更新节点结果请使用“录入实验结果”。");}
+function editExperiment(e){form("编辑实验记录",[field("title","标题"),field("status","状态","select",statuses),field("duration","耗时"),field("summary","摘要","textarea")],e,v=>save("experiments",v),"编辑节点当前采用的实验记录会同步更新节点结果；其他历史记录只更新自身。");}
 function download(value,name){const url=URL.createObjectURL(new Blob([JSON.stringify(value,null,2)],{type:"application/json"}));const a=document.createElement("a");a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
 async function loadSettings(){
   const client=requireApi();settingsError.value="";
@@ -106,26 +121,59 @@ function revoke(t){confirmAction("撤销 Token","使用此 Token 的客户端将
 function seed(){confirmAction("导入示例研究","仅允许向空工作区导入，不会覆盖现有数据。",async()=>{const client=requireApi();await client("/seed",{method:"POST"});await refresh(client);message("示例已导入");});}
 function resolveRoute(){const hash=location.hash.slice(1),next=hash==="api"?"mcp":hash;return nav.some(([id])=>id===next)?next:"workspace";}
 function hashChanged(){route.value=resolveRoute();}
-onMounted(()=>{window.addEventListener("hashchange",hashChanged);try{const saved=sessionStorage.getItem("flowmaster.connection")||localStorage.getItem("flowmaster.connection");if(saved)run(()=>connect(JSON.parse(saved)));}catch{forget();}});
-onBeforeUnmount(()=>{session?.abort();clearTimeout(timer);window.removeEventListener("hashchange",hashChanged);});
+onMounted(()=>{window.addEventListener("hashchange",hashChanged);window.addEventListener("keydown",workspaceKeydown);try{const saved=sessionStorage.getItem("flowmaster.connection")||localStorage.getItem("flowmaster.connection");if(saved)run(()=>connect(JSON.parse(saved)));}catch{forget();}});
+onBeforeUnmount(()=>{session?.abort();clearTimeout(timer);window.removeEventListener("hashchange",hashChanged);window.removeEventListener("keydown",workspaceKeydown);});
 </script>
 
 <template>
 <a class="skip" href="#main" @click.prevent="mainElement?.focus()">跳到内容</a>
-<header><a class="brand" href="#workspace"><span class="logo">F</span>FlowMaster</a><span class="muted">研究流程 · 从假设到证据</span><div id="connection"><span v-if="connection" class="connection-status badge verified">工作区已连接</span><UiButton v-if="connection" @click="run(()=>refresh())" :busy="busy">刷新</UiButton><UiButton v-if="connection" @click="forget">退出</UiButton><UiButton v-else variant="primary" @click="login" :busy="busy">管理员登录</UiButton></div></header>
-<div class="shell"><nav aria-label="主导航"><a v-for="[id,label] in nav" :key="id" :href="'#'+id" :class="{active:route===id}" :aria-current="route===id?'page':undefined">{{label}}</a><small>Vue 3 · Cloudflare Workers</small></nav>
-<main ref="mainElement" id="main" tabindex="-1">
-<div class="toolbar"><div><h1>{{nav.find(([id])=>id===route)?.[1]}}</h1><p class="muted">以假设组织研究，用真实实验记录验证进展</p></div><div class="row"><UiButton v-if="connection" @click="download(data,'flowmaster-workspace.json')">导出工作区</UiButton></div></div>
+<header v-show="!focused" class="app-header">
+  <a class="brand" href="#workspace"><span class="logo">F</span>FlowMaster</a>
+  <nav class="main-nav" aria-label="主导航"><a v-for="[id,label] in nav" :key="id" :href="'#'+id" :class="{active:route===id}" :aria-current="route===id?'page':undefined">{{label}}</a></nav>
+  <div id="connection"><span v-if="connection" class="connection-status"><i aria-hidden="true"/>已连接</span><UiButton v-if="connection" @click="run(()=>refresh())" :busy="busy">刷新</UiButton><UiButton v-if="connection" @click="forget">退出</UiButton><UiButton v-else variant="primary" @click="login" :busy="busy">登录工作区</UiButton></div>
+</header>
+<div class="shell"><main ref="mainElement" id="main" tabindex="-1" :class="{'workbench':route==='workspace','focus-mode':focused}">
+<div v-if="route!=='workspace'" class="toolbar page-heading"><div><h1>{{nav.find(([id])=>id===route)?.[1]}}</h1><p class="muted">以假设组织研究，用真实实验记录验证进展</p></div><UiButton v-if="connection" @click="download(data,'flowmaster-workspace.json')">导出工作区</UiButton></div>
 <template v-if="route==='workspace'">
-<div class="cards"><div class="card"><small>研究项目</small><div class="metric">{{data.projects.length}}</div></div><div class="card"><small>研究假设</small><div class="metric">{{data.hypotheses.length}}</div></div><div class="card"><small>已验证假设</small><div class="metric">{{verifiedHypothesisCount}}</div></div><div class="card"><small>实验与分析记录</small><div class="metric">{{data.experiments.length}}</div></div></div>
-<div v-if="!connection" class="panel empty"><h2>工作区为空</h2><p>登录后读取真实数据；不会自动加载演示内容</p><UiButton variant="primary" @click="login">登录工作区</UiButton></div>
-<div v-else class="workspace">
-<aside class="panel"><div class="toolbar"><h2>假设列表</h2><UiButton @click="editHypothesis()" :busy="busy">＋</UiButton></div><select v-model="projectId" aria-label="筛选项目"><option value="">全部项目</option><option v-for="p in data.projects" :key="p.id" :value="p.id">{{p.name}}</option></select><input v-model="search" placeholder="搜索假设" aria-label="搜索假设"><select v-model="status" aria-label="筛选假设状态"><option value="">全部状态</option><option v-for="s in statuses" :value="s.value" :key="s.value">{{s.label}}</option></select><div class="list"><button v-for="h in hypotheses" :key="h.id" class="item" :class="{selected:current?.id===h.id}" @click="hypothesisId=h.id;nodeId=''"><strong>{{h.title}}</strong><small>{{projectName(h.projectId)}}</small><br><span class="badge" :class="h.status">{{statusLabel[h.status]}}</span></button><p v-if="!hypotheses.length" class="empty">暂无假设</p></div><UiButton @click="editProject()" :busy="busy">新建项目</UiButton></aside>
-<div v-if="current" class="stack"><section class="panel"><div class="toolbar"><div><h2>{{current.title}}</h2><small>{{projectName(current.projectId)}} · 基线：{{current.baseline||'未填写'}}</small></div><div class="row"><UiButton @click="editHypothesis(current)" :busy="busy">编辑</UiButton><UiButton variant="danger" @click="remove('hypotheses',current)" :busy="busy">删除</UiButton></div></div><p>{{current.description}}</p></section><FlowCanvas :key="current.id" :hypothesis="current" :selected-id="nodeId" :busy="busy" @select="nodeId=$event" @move="moveNode" @add="addNode" @layout="layout"/></div>
-<section v-else class="panel empty"><h2>开始你的研究流程</h2><p>先创建项目，再添加假设与验证节点</p></section>
-<aside v-if="nodeDraft&&current" class="panel inspector"><h2>节点详情</h2><p v-if="nodeDirty" class="unsaved" role="status">有未保存的修改；切换节点或假设会保留，刷新页面或退出后丢失</p><p v-if="nodeConflicted" class="form-error">服务端内容已变化，请核对草稿中的冲突字段后再保存</p><form @submit.prevent="run(saveNode)"><UiField label="节点标题"><input v-model="nodeDraft.title" required maxlength="200"></UiField><UiField label="节点类型"><select v-model="nodeDraft.type"><option v-for="(label,value) in nodeTypeLabel" :value="value" :key="value">{{label}}</option></select></UiField><UiField label="状态"><select v-model="nodeDraft.status"><option v-for="s in statuses" :value="s.value" :key="s.value">{{s.label}}</option></select></UiField><UiField v-for="[key,label] in nodeFields" :key="key" :label="label"><textarea v-model="nodeDraft[key]" maxlength="16000"/></UiField><UiField label="实验开始时间"><input v-model="nodeDraft.startedAt" maxlength="100"></UiField><UiField label="实际耗时"><input v-model="nodeDraft.duration" maxlength="100"></UiField><UiField label="上游节点" hint="按住 Ctrl / Command 可多选，服务端会拒绝循环依赖"><select v-model="upstream" multiple><option v-for="n in upstreamOptions" :value="n.id" :key="n.id">{{n.title}}</option></select></UiField><div class="actions"><UiButton type="submit" variant="primary" :busy="busy">保存节点</UiButton></div></form><div class="actions"><UiButton @click="resultForm" :busy="busy">录入实验结果</UiButton><UiButton variant="danger" @click="deleteNode" :busy="busy">删除节点</UiButton></div><hr><h3>该节点的实验记录</h3><button v-for="e in nodeExperiments" :key="e.id" class="item" @click="showExperiment(e)">{{e.title}} <span class="badge">{{e.source==='agent'?'历史模型建议':'真实录入'}}</span></button></aside>
-<aside v-else class="panel empty">选择一个节点查看详情</aside>
-</div>
+  <div class="workspace-heading">
+    <div class="row"><UiButton v-if="connection" class="sidebar-toggle" :aria-expanded="sidebarOpen" aria-controls="hypothesis-list" @click="sidebarOpen=!sidebarOpen"><span aria-hidden="true">☷</span> {{sidebarOpen?'收起列表':'假设列表'}}</UiButton><h1>{{focused?'研究画布':'研究工作区'}}</h1></div>
+    <div v-if="!focused" class="workspace-stats" aria-label="工作区概况"><span><b>{{data.projects.length}}</b> 项目</span><span><b>{{data.hypotheses.length}}</b> 假设</span><span class="stat-verified"><b>{{verifiedHypothesisCount}}</b> 已验证</span><span><b>{{data.experiments.length}}</b> 记录</span></div>
+    <UiButton v-if="connection&&!focused" class="export-button" @click="download(data,'flowmaster-workspace.json')">导出</UiButton>
+  </div>
+  <div v-if="!connection" class="panel empty welcome"><span class="eyebrow">RESEARCH WORKSPACE</span><h2>让每一步研究，都有迹可循</h2><p>登录后在画布中组织假设、连接验证步骤与实验结果。</p><UiButton variant="primary" @click="login">登录工作区</UiButton></div>
+  <div v-else class="workspace" :class="{'sidebar-open':sidebarOpen}">
+    <aside v-if="sidebarOpen" id="hypothesis-list" class="hypothesis-sidebar" aria-label="假设列表">
+      <div class="sidebar-heading"><h2>研究假设 <span>{{hypotheses.length}}</span></h2><UiButton @click="editHypothesis()" :busy="busy" aria-label="新建假设" title="新建假设">＋</UiButton></div>
+      <div class="sidebar-filters"><select v-model="projectId" aria-label="筛选项目"><option value="">全部项目</option><option v-for="p in data.projects" :key="p.id" :value="p.id">{{p.name}}</option></select><input v-model="search" placeholder="搜索假设…" aria-label="搜索假设"><select v-model="status" aria-label="筛选假设状态"><option value="">全部状态</option><option v-for="s in statuses" :value="s.value" :key="s.value">{{s.label}}</option></select></div>
+      <div class="hypothesis-items"><button v-for="h in hypotheses" :key="h.id" class="hypothesis-item" :class="{selected:current?.id===h.id}" :aria-current="current?.id===h.id?'true':undefined" :title="h.title" @click="selectHypothesis(h.id)"><span class="hypothesis-project">{{projectName(h.projectId)}}</span><strong>{{h.title}}</strong><span class="item-footer"><span class="badge" :class="h.status">{{statusLabel[h.status]||h.status}}</span><small>{{h.nodes.length}} 节点</small></span></button><p v-if="!hypotheses.length" class="empty">暂无匹配的假设</p></div>
+      <div class="sidebar-footer"><UiButton @click="editProject()" :busy="busy">＋ 新建项目</UiButton></div>
+    </aside>
+    <div v-if="current" class="flow-main">
+      <section class="flow-heading" aria-label="当前研究假设">
+        <div class="flow-title-row"><div class="flow-title"><div class="flow-breadcrumb"><span>{{projectName(current.projectId)}}</span><span aria-hidden="true">/</span><span>研究流程</span><span class="badge" :class="current.status">{{statusLabel[current.status]||current.status}}</span></div><h2>{{current.title}}</h2></div><div class="flow-actions"><UiButton @click="editHypothesis(current)" :busy="busy">编辑假设</UiButton><details class="hypothesis-menu"><summary aria-label="更多假设操作">•••</summary><div><UiButton variant="danger" @click="remove('hypotheses',current)" :busy="busy">删除假设</UiButton></div></details></div></div>
+        <div v-if="!focused&&(current.baseline||current.description)" class="flow-context"><span v-if="current.baseline" class="baseline" :title="current.baseline"><b>基线</b> {{current.baseline}}</span><button v-if="current.description" class="text-button" aria-haspopup="dialog" @click="showDescription">研究说明 ↗</button></div>
+      </section>
+      <FlowCanvas :key="current.id" :hypothesis="current" :selected-id="nodeId" :busy="busy" :focused="focused" @select="nodeId=$event" @inspect="openInspector" @focus="toggleFocus" @move="moveNode" @add="addNode" @layout="layout"/>
+      <button v-if="selectedNode&&!inspectorOpen" class="selected-node-hint" @click="openInspector(nodeId)"><span class="selection-dot"/>已选中：<strong>{{selectedNode.title}}</strong><span>查看详情 →</span></button>
+    </div>
+    <section v-else class="panel empty"><h2>开始你的研究流程</h2><p>先创建项目，再添加假设与验证节点</p><UiButton @click="editHypothesis()" :busy="busy">＋ 新建假设</UiButton></section>
+  </div>
+  <NodeDrawer v-if="inspectorOpen&&nodeDraft&&current" :title="editingNode?'编辑节点':'节点详情'" :content-key="nodeId" :return-focus="selectedNodeElement" @close="closeInspector">
+    <p v-if="nodeDirty" class="draft-note" role="status">有未保存的草稿。关闭详情或切换节点仍会保留；刷新页面或退出后丢失。<button v-if="!editingNode" class="text-button" @click="editingNode=true">继续编辑 →</button></p>
+    <p v-if="nodeConflicted" class="form-error">服务端内容已变化，请核对草稿中的冲突字段后再保存。</p>
+    <NodeOverview v-if="!editingNode" :key="current.id+':'+nodeId" :node="selectedNode" :experiments="nodeExperiments" :resources="data.resources" :node-options="current.nodes" :edges="current.edges" @edit="editingNode=true" @result="resultForm" @history="showExperiment"/>
+    <form v-else class="node-editor" @submit.prevent="run(saveNode)">
+      <div class="editor-heading"><button type="button" class="text-button" @click="editingNode=false">← 返回概览</button><span class="muted">{{nodeDirty?'草稿未保存':'已保存'}}</span></div>
+      <UiField label="节点标题"><input v-model="nodeDraft.title" required maxlength="200"></UiField>
+      <UiField label="节点类型"><select v-model="nodeDraft.type"><option v-for="(label,value) in nodeTypeLabel" :value="value" :key="value">{{label}}</option></select></UiField>
+      <details class="editor-section" open><summary>研究内容 <small>思路 · 方法 · 结论</small></summary><UiField v-for="[key,label] in nodeFields.filter(([key])=>['rationale','method','conclusion','nextAction'].includes(key))" :key="key" :label="label"><textarea v-model="nodeDraft[key]" maxlength="16000"/></UiField></details>
+      <details class="editor-section"><summary>输入与输出 <small>数据 · 文件路径</small></summary><UiField v-for="[key,label] in nodeFields.filter(([key])=>['inputs','output'].includes(key))" :key="key" :label="label"><textarea v-model="nodeDraft[key]" maxlength="16000"/></UiField></details>
+      <details class="editor-section"><summary>结果与时间</summary><p v-if="selectedNode.currentResultId" class="muted">当前结果由实验记录同步，请通过“录入实验结果”更新。</p><UiField label="状态"><select v-model="nodeDraft.status" :disabled="!!selectedNode.currentResultId"><option v-for="s in statuses" :value="s.value" :key="s.value">{{s.label}}</option></select></UiField><UiField label="结果摘要"><textarea v-model="nodeDraft.summary" :disabled="!!selectedNode.currentResultId" maxlength="16000"/></UiField><UiField label="实验开始时间"><input v-model="nodeDraft.startedAt" maxlength="100"></UiField><UiField label="实际耗时"><input v-model="nodeDraft.duration" :disabled="!!selectedNode.currentResultId" maxlength="100"></UiField></details>
+      <details class="editor-section"><summary>上游节点 <small>{{upstream.length}} 个连接</small></summary><UiField label="依赖关系" hint="按住 Ctrl / Command 可多选，服务端会拒绝循环依赖"><select v-model="upstream" multiple><option v-for="n in upstreamOptions" :value="n.id" :key="n.id">{{n.title}}</option></select></UiField></details>
+      <div class="editor-save"><UiButton type="submit" variant="primary" :busy="busy">保存节点</UiButton><UiButton @click="resultForm" :busy="busy">录入实验结果</UiButton></div>
+      <div class="editor-danger"><UiButton variant="danger" @click="deleteNode" :busy="busy">删除节点</UiButton></div>
+    </form>
+  </NodeDrawer>
 </template>
 <template v-else-if="route==='projects'"><div class="toolbar"><p>组织不同研究方向的假设与资源</p><UiButton variant="primary" @click="editProject()" :busy="busy||!connection">＋ 新建项目</UiButton></div><div class="cards"><article v-for="p in data.projects" :key="p.id" class="card"><h2>{{p.name}}</h2><p>{{p.description}}</p><small>{{projectHypothesisCounts.get(p.id)||0}} 个假设 · 更新于 {{date(p.updatedAt)}}</small><div class="actions"><UiButton @click="openProject(p.id)">打开</UiButton><UiButton @click="editProject(p)" :busy="busy">编辑</UiButton><UiButton variant="danger" @click="remove('projects',p)" :busy="busy">删除</UiButton></div></article></div><div v-if="!data.projects.length" class="panel empty">暂无项目，请登录后新建</div></template>
 <template v-else-if="route==='experiments'"><div class="toolbar"><input v-model="search" placeholder="搜索实验记录" aria-label="搜索实验记录"><select v-model="status" aria-label="实验状态"><option value="">全部状态</option><option v-for="s in statuses" :value="s.value" :key="s.value">{{s.label}}</option></select><UiButton @click="download(experiments,'flowmaster-experiments.json')">导出记录</UiButton></div><div class="panel table-wrap"><table><thead><tr><th>实验 / 分析</th><th>所属假设</th><th>状态</th><th>耗时</th><th>操作</th></tr></thead><tbody><tr v-for="e in experiments" :key="e.id"><td><strong>{{e.title}}</strong><br><small>{{e.source==='agent'?'历史模型建议，不代表实验验证':'手动实验结果'}} · {{date(e.updatedAt)}}</small></td><td>{{hypothesisName(e.hypothesisId)}}</td><td><span class="badge" :class="e.status">{{statusLabel[e.status]}}</span></td><td>{{e.duration||'—'}}</td><td><div class="row"><UiButton @click="showExperiment(e)">详情</UiButton><UiButton @click="editExperiment(e)" :busy="busy">编辑</UiButton><UiButton variant="danger" @click="remove('experiments',e)" :busy="busy">删除</UiButton></div></td></tr></tbody></table><p v-if="!experiments.length" class="empty">暂无实验记录；选择流程节点录入结果</p></div></template>
@@ -143,6 +191,7 @@ tokens_list · tokens_create · tokens_revoke</div><p>项目、假设、实验�
 <UiModal v-if="modal" :title="modal.title" :busy="busy&&modal.submit!==connect" @close="closeModal"><p v-if="modal.description" class="muted">{{modal.description}}</p><p v-if="modal.error" class="form-error">{{modal.error}}</p>
 <form v-if="modal.kind==='form'" @submit.prevent="submitModal"><UiField v-for="f in modal.fields" :key="f.key" :label="f.label"><textarea v-if="f.type==='textarea'" v-model="modal.value[f.key]" maxlength="16000"/><select v-else-if="f.type==='select'" v-model="modal.value[f.key]"><option v-for="o in f.options" :key="o.value" :value="o.value">{{o.label}}</option></select><input v-else-if="f.type==='checkbox'" v-model="modal.value[f.key]" type="checkbox"><input v-else v-model="modal.value[f.key]" :type="f.type" :autocomplete="f.type==='password'?'new-password':'off'" :maxlength="f.type==='password'?4096:f.type==='url'?2000:200" :min="f.type==='number'?1:undefined" :max="f.type==='number'?365:undefined" :required="['name','title','token'].includes(f.key)"></UiField><div class="actions"><UiButton type="button" @click="closeModal" :busy="busy&&modal.submit!==connect">取消</UiButton><UiButton type="submit" variant="primary" :busy="busy">{{busy?'处理中…':'保存'}}</UiButton></div></form>
 <div v-else-if="modal.kind==='confirm'" class="actions"><UiButton @click="modal=null" :busy="busy">取消</UiButton><UiButton variant="primary" @click="submitModal" :busy="busy">确认</UiButton></div>
+<div v-else-if="modal.kind==='description'"><h3>{{modal.subject}}</h3><p class="log research-description">{{modal.text}}</p></div>
 <div v-else-if="modal.kind==='detail'"><span class="badge" :class="modal.record.status">{{statusLabel[modal.record.status]}}</span><p class="log">{{modal.record.summary}}</p><h3>执行日志</h3><p v-for="(log,index) in modal.record.logs" :key="index" class="log"><small>{{log.time}}</small><br>{{log.message}}</p><UiButton @click="download(modal.record,'experiment.json')">导出此记录</UiButton></div>
 <div v-else-if="modal.kind==='token'"><textarea readonly :value="modal.token" aria-label="新建 Token"/><div class="actions"><UiButton @click="modal=null">我已保存，关闭</UiButton></div></div>
 </UiModal>
