@@ -110,6 +110,7 @@ pnpm run builds:logs --account <ACCOUNT_ID> --build <BUILD_UUID>
 
 | 失败阶段 | 优先核对 |
 | --- | --- |
+| 环境初始化 | 若出现 `Build failed to initialize and was timed out`，核对构建 UUID、提交 SHA、阶段时间及 Cloudflare 状态；尚未拉取代码时，修改项目依赖或构建脚本无法修复该次初始化失败 |
 | 安装依赖 | 日志中的 Node/pnpm 版本、锁文件校验错误、是否省略开发依赖 |
 | Vite 构建 | 具体编译错误与缺失模块；是否在仓库根目录执行 |
 | Worker 打包 | Wrangler 的具体错误、入口与 `dist/client` 是否存在 |
@@ -117,5 +118,13 @@ pnpm run builds:logs --account <ACCOUNT_ID> --build <BUILD_UUID>
 | 页面可打开但无法登录 | 对应环境的 `DB`、`ADMIN_TOKEN`、D1 迁移和 Origin 设置 |
 
 Wrangler 预览上传成功后，还会读取默认设置来输出绑定警告。后续读取失败也可能使整个命令退出非零，因此应保留“部署成功”信息及最后错误一起判断，不能只看红色状态。
+
+### 2026-10-03 初始化超时记录
+
+主分支提交 `fbc2397a3972e3fec6e63a869472213a3ee746a8`（合并 PR #14）的构建 `84d283d5-f610-4d5d-8c03-b1891a0b1a06` 通过 Builds API 确认为 `terminated`，`running_on` 为 `null`。完整日志只有两条 `Initializing build environment...` 和一条 `Build failed to initialize and was timed out`，未进入代码克隆、依赖安装或项目构建阶段。这些证据定位到 Cloudflare 构建环境初始化超时，尚不能确定平台内部超时的具体原因。
+
+同一主分支提交的本地 TypeScript 检查、Vite 构建、静态资源校验和 Wrangler 4.92.0 生产 dry-run 均通过。PR #15 提交 `3519330` 的 GitHub CI 和 Cloudflare 预览构建 `6ec43537-b937-4fc0-9528-96d2191a9c33` 也已通过；该预览日志仍提示缺少 `DB` 和 `ALLOWED_ORIGINS` 绑定，构建成功不能代替预览业务功能验证。
+
+遇到此类初始化超时，可以从失败的 GitHub check 详情或 Cloudflare 控制台重试目标构建，参见 [Cloudflare 官方重试说明](https://developers.cloudflare.com/changelog/post/2025-03-17-rerun-build/)。重试生产分支会执行该分支配置的部署命令。向 PR 分支推送提交会触发新的分支预览构建；其成功不代表失败的主分支生产部署已恢复，应分别核对分支、提交 SHA 与构建结果。
 
 排查时提供构建命令、Node/pnpm 版本、失败阶段最后一段错误及错误码即可。不要粘贴 Token、Authorization 请求头或完整环境变量。
