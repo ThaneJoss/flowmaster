@@ -80,6 +80,34 @@ pnpm run deploy:doctor --remote
 
 ## 按失败阶段定位
 
+### 让 agent 或命令行读取 Workers Builds 日志
+
+GitHub 的 Cloudflare check 可能只有构建详情链接，没有日志正文。`wrangler tail` 查看的是 Worker **运行时**日志；本项目固定的 Wrangler 4.92.0 没有读取 Workers Builds 历史构建日志的命令。可以使用以下两种官方途径。
+
+**Agent：Cloudflare Workers Builds MCP**
+
+在支持远程 MCP 和 OAuth 的客户端中连接 `https://builds.mcp.cloudflare.com/mcp`，通过 Cloudflare 登录授权并选择账号。它使用 Streamable HTTP，提供 `workers_builds_list_builds`、`workers_builds_get_build`、`workers_builds_get_build_logs`。已知构建 ID 时，让 agent 调用：
+
+```json
+{"buildUUID":"替换为构建详情 URL 最后一段的 UUID"}
+```
+
+先用 `workers_builds_get_build` 确认目标构建及实际命令，再用 `workers_builds_get_build_logs` 读取日志。多账号时明确目标账号；连接 MCP 需要在客户端完成，仓库中的应用 MCP 接口不提供 Cloudflare 账号访问能力。参见 [Cloudflare 官方 Workers Builds MCP](https://github.com/cloudflare/mcp-server-cloudflare/tree/main/apps/workers-builds)。
+
+**命令行：只读 Builds API**
+
+在 [Cloudflare 个人 API Tokens](https://dash.cloudflare.com/profile/api-tokens) 创建**用户级** Token，授予目标账号的 **Workers CI Read** 权限，并通过环境设置提供 `CLOUDFLARE_API_TOKEN`。Builds API 不支持账号级 Token；这里的读取 Token 与构建系统发布时使用的 build token 不同。已知构建 UUID 时，无需额外授予 Workers Scripts Read 或任何写权限。
+
+```sh
+pnpm run builds:logs --account <ACCOUNT_ID> --build <BUILD_UUID>
+```
+
+命令先 GET 构建状态，再 GET `/accounts/{account_id}/builds/builds/{build_uuid}/logs`；按 `truncated` 和 `cursor` 读取后续页，拒绝重复或缺失游标。不触发重试或部署，不展开构建详情中的环境变量字段。构建本身失败时，成功取回日志仍退出 0；网络、鉴权或不完整日志会退出非零。运行中的构建只能取得当时的日志快照。
+
+输出会遮蔽当前读取 Token 和 Bearer 值，但无法保证识别构建脚本打印的所有敏感内容；分享前检查日志，不要提交到 Git。详细来源：[Builds API 指南](https://developers.cloudflare.com/workers/ci-cd/builds/api-reference/) · [获取日志接口及读取权限](https://developers.cloudflare.com/api/resources/workers_builds/subresources/builds/subresources/logs/methods/get/)。
+
+### 对照错误定位
+
 | 失败阶段 | 优先核对 |
 | --- | --- |
 | 安装依赖 | 日志中的 Node/pnpm 版本、锁文件校验错误、是否省略开发依赖 |

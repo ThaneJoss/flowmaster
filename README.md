@@ -87,6 +87,7 @@ pnpm dev
 | `pnpm run deploy:check` | 前端构建与 Worker dry-run 打包，不发布 |
 | `pnpm run deploy:doctor` | 检查本地部署配置；构建产物需先生成 |
 | `pnpm run deploy:doctor --remote` | 只读检查远端预览默认绑定；需 Cloudflare API Token |
+| `pnpm run builds:logs --account <ID> --build <UUID>` | 只读获取 Cloudflare 构建状态与分页日志；需用户级 Token 的 Workers CI Read 权限 |
 | `pnpm run deploy:preview` | 构建并运行 Wrangler preview |
 | `pnpm run deploy` | 构建并发布生产 |
 
