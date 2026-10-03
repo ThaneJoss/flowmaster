@@ -85,6 +85,8 @@ pnpm dev
 | `pnpm test` | 单元与集成测试 |
 | `pnpm test:worker` | 构建、打包并检查隔离的本地 Worker / D1 |
 | `pnpm run deploy:check` | 前端构建与 Worker dry-run 打包，不发布 |
+| `pnpm run deploy:doctor` | 检查本地部署配置；构建产物需先生成 |
+| `pnpm run deploy:doctor --remote` | 只读检查远端预览默认绑定；需 Cloudflare API Token |
 | `pnpm run deploy:preview` | 构建并运行 Wrangler preview |
 | `pnpm run deploy` | 构建并发布生产 |
 
@@ -102,7 +104,9 @@ pnpm dev
 
 新建数据库后执行 `pnpm db:migrate:remote`，再运行 `pnpm run deploy`。发布脚本会先构建并校验产物；预览也使用表中的脚本，以确保静态资源已生成。
 
-使用 Cloudflare Git 构建时，根目录选仓库根目录，构建命令填 `pnpm build`，生产部署命令填 `pnpm run deploy`，非生产分支部署命令填 `pnpm run deploy:preview`，生产分支为 `main`。构建环境使用 Node.js 24 和固定版本的 pnpm。
+使用 Cloudflare Git 构建时，根目录选仓库根目录，构建命令填 `pnpm check`，生产部署命令填 `pnpm run deploy`，非生产分支部署命令填 `pnpm run deploy:preview`，生产分支为 `main`。发布脚本负责前端构建，无需在构建阶段重复执行。仓库通过 `.node-version` 固定 Node.js 24，通过 `packageManager` 声明 pnpm 11.25.0；Cloudflare 中已有的版本覆盖设置也需要与之保持一致，安装时必须包含开发依赖。
+
+**分支预览需要独立配置。** `wrangler preview` 使用 `previews` 配置和 Cloudflare 的预览默认设置，生产 D1 与 Secret 不会直接继承。当前仓库依赖控制台提供预览 `DB` 和 `ADMIN_TOKEN`；生产 dry-run 通过不能证明这些远端设置已就绪。预览数据库应独立创建、迁移，不能误用生产迁移命令。配置步骤、只读诊断及错误定位见 [部署排查](docs/DEPLOYMENT.md)。
 
 <details>
 <summary>已有实例与旧接口兼容</summary>
@@ -117,4 +121,6 @@ pnpm dev
 
 - [MCP 接入参考](docs/API.md)：协议、调用示例与错误处理。
 - [界面设计](docs/DESIGN.md)：交互和视觉规范。
+- [部署排查](docs/DEPLOYMENT.md)：Cloudflare 生产、分支预览和诊断边界。
+- [可靠性审查](docs/RELIABILITY.md)：已修正的配置缺口与待处理的数据规模风险。
 - [验证记录](docs/VALIDATION.json)：已记录的检查范围与尚未验证的事项。
