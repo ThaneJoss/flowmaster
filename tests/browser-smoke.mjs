@@ -8,6 +8,10 @@ for(let n=0;n<50;n++){try{if((await fetch(origin)).ok)break;}catch{}await new Pr
 const browser=await chromium.launch({headless:true});
 const page=await browser.newPage({viewport:{width:1440,height:1000}});
 const errors=[];page.on("pageerror",e=>errors.push(e.message));
+const modal=title=>page.getByRole("dialog",{name:title,exact:true});
+const loginDialog=modal("登录工作区");
+const loginButton=page.locator("#connection").getByRole("button",{name:"登录工作区",exact:true});
+const drawer=page.locator("dialog.node-drawer");
 const emptyNode={id:"node1",title:"Smoke node",type:"experiment",status:"pending",x:40,y:40,inputs:"",output:"",summary:"",rationale:"",method:"",conclusion:"",nextAction:"",startedAt:"",duration:""};
 const data={projects:[{id:"project1",name:"Smoke project",description:"Fixture only",revision:1}],hypotheses:[{id:"hypothesis1",projectId:"project1",title:"Smoke hypothesis",description:"No real data",baseline:"test",status:"pending",nodes:[emptyNode],edges:[],revision:1}],experiments:[{id:"historical1",hypothesisId:"hypothesis1",nodeId:"node1",title:"Historical suggestion",source:"agent",status:"pending",summary:"Retained historical record",duration:"",logs:[],revision:1}],resources:[]};
 const tokenList=[];
@@ -57,7 +61,7 @@ try{
   for(const hash of ["main","not-a-route"]){
     await page.goto(origin+"/#"+hash);
     await page.getByRole("heading",{name:"研究工作区",exact:true}).waitFor();
-    await page.getByRole("heading",{name:"工作区为空",exact:true}).waitFor();
+    await page.getByRole("heading",{name:"让每一步研究，都有迹可循",exact:true}).waitFor();
   }
   await page.getByRole("link",{name:"项目管理",exact:true}).click();
   await page.getByRole("heading",{name:"项目管理",exact:true}).waitFor();
@@ -69,21 +73,21 @@ try{
   await page.reload();
   await page.getByRole("heading",{name:"项目管理",exact:true}).waitFor();
   await page.getByRole("link",{name:"研究工作区",exact:true}).click();
-  await page.getByRole("heading",{name:"工作区为空",exact:true}).waitFor();
+  await page.getByRole("heading",{name:"让每一步研究，都有迹可循",exact:true}).waitFor();
 
   // Failed authentication keeps the form and input, and allows a retry.
-  await page.getByRole("button",{name:"管理员登录",exact:true}).click();
-  await page.getByRole("dialog").getByLabel("访问 Token",{exact:true}).fill("fixture-invalid-token");
+  await loginButton.click();
+  await loginDialog.getByLabel("访问 Token",{exact:true}).fill("fixture-invalid-token");
   failNextWorkspace=true;
-  await page.getByRole("dialog").getByRole("button",{name:"保存",exact:true}).click();
-  await page.getByRole("dialog").getByText("Fixture invalid token",{exact:true}).waitFor();
-  assert.equal(await page.getByRole("dialog").getByLabel("访问 Token",{exact:true}).inputValue(),"fixture-invalid-token");
-  await page.getByRole("dialog").getByLabel("访问 Token",{exact:true}).fill("fixture-retry-token");
-  await page.getByRole("dialog").getByRole("button",{name:"保存",exact:true}).click();
-  await page.getByRole("dialog").waitFor({state:"hidden"});
+  await loginDialog.getByRole("button",{name:"保存",exact:true}).click();
+  await loginDialog.getByText("Fixture invalid token",{exact:true}).waitFor();
+  assert.equal(await loginDialog.getByLabel("访问 Token",{exact:true}).inputValue(),"fixture-invalid-token");
+  await loginDialog.getByLabel("访问 Token",{exact:true}).fill("fixture-retry-token");
+  await loginDialog.getByRole("button",{name:"保存",exact:true}).click();
+  await loginDialog.waitFor({state:"hidden"});
   await page.getByRole("heading",{name:"Smoke hypothesis",exact:true}).waitFor();
   await page.getByRole("button",{name:"退出",exact:true}).click();
-  await page.getByRole("heading",{name:"工作区为空",exact:true}).waitFor();
+  await page.getByRole("heading",{name:"让每一步研究，都有迹可循",exact:true}).waitFor();
 
   // Closing an in-flight login must abort it and prevent a late reconnection.
   for(const dismiss of ["取消","关闭","Escape","Back"]){
@@ -93,21 +97,21 @@ try{
       await page.getByRole("link",{name:"系统设置",exact:true}).click();
       await page.getByRole("heading",{name:"系统设置",exact:true}).waitFor();
     }
-    await page.getByRole("button",{name:"管理员登录",exact:true}).click();
-    await page.getByRole("dialog").getByLabel("访问 Token",{exact:true}).fill("fixture-cancelled-token");
+    await loginButton.click();
+    await loginDialog.getByLabel("访问 Token",{exact:true}).fill("fixture-cancelled-token");
     const gate=delayNextWorkspace();
-    await page.getByRole("dialog").getByRole("button",{name:"保存",exact:true}).click();
+    await loginDialog.getByRole("button",{name:"保存",exact:true}).click();
     await bounded(gate.requested,"Intercepted login request");
-    assert.equal(await page.getByRole("dialog").isVisible(),true);
-    assert.equal(await page.getByRole("dialog").getByRole("button",{name:"处理中…",exact:true}).isDisabled(),true);
+    assert.equal(await loginDialog.isVisible(),true);
+    assert.equal(await loginDialog.getByRole("button",{name:"处理中…",exact:true}).isDisabled(),true);
     const aborted=page.waitForEvent("requestfailed",{predicate:request=>new URL(request.url()).pathname==="/mcp"&&request.postDataJSON()?.method==="tools/call"&&request.postDataJSON()?.params?.name==="workspace_get"});
     if(dismiss==="Escape")await page.keyboard.press("Escape");
     else if(dismiss==="Back")await page.goBack();
-    else await page.getByRole("dialog").getByRole("button",{name:dismiss,exact:true}).click();
-    await page.getByRole("dialog").waitFor({state:"hidden"});
+    else await loginDialog.getByRole("button",{name:dismiss,exact:true}).click();
+    await loginDialog.waitFor({state:"hidden"});
     await aborted;
     gate.release();await bounded(gate.finished,"Cancelled login response teardown");
-    await page.waitForFunction(()=>[...document.querySelectorAll("button")].some(button=>button.textContent==="管理员登录"&&!button.disabled));
+    await page.waitForFunction(()=>[...document.querySelectorAll("#connection button")].some(button=>button.textContent.trim()==="登录工作区"&&!button.disabled));
     assert.deepEqual(await page.evaluate(()=>[localStorage.getItem("flowmaster.connection"),sessionStorage.getItem("flowmaster.connection")]),[null,null]);
     assert.equal(await page.locator(".connection-status").count(),0);
     if(dismiss==="Back"){
@@ -117,29 +121,39 @@ try{
     }
   }
 
-  await page.getByRole("button",{name:"管理员登录",exact:true}).click();
-  await page.getByRole("dialog").getByLabel("访问 Token",{exact:true}).fill("fixture-admin-token");
-  await page.getByRole("dialog").getByRole("button",{name:"保存",exact:true}).click();
+  await loginButton.click();
+  await loginDialog.getByLabel("访问 Token",{exact:true}).fill("fixture-admin-token");
+  await loginDialog.getByRole("button",{name:"保存",exact:true}).click();
   await page.getByRole("heading",{name:"Smoke hypothesis",exact:true}).waitFor();
   assert.equal(await page.evaluate(()=>localStorage.getItem("flowmaster.connection")),null);
-  await page.locator(".node").first().click();
-  await page.getByLabel("节点标题",{exact:true}).fill("Edited node");
-  await page.getByRole("button",{name:"保存节点",exact:true}).click();
+  await page.locator('.node[data-node-id="node1"]').click();
+  await drawer.getByRole("button",{name:"编辑节点",exact:true}).click();
+  await drawer.getByLabel("节点标题",{exact:true}).fill("Edited node");
+  await drawer.getByRole("button",{name:"保存节点",exact:true}).click();
   await page.locator(".node").filter({hasText:"Edited node"}).waitFor();
   assert.equal(data.hypotheses[0].nodes[0].title,"Edited node");
-  await page.locator(".inspector").getByRole("button",{name:"Historical suggestion 历史模型建议",exact:true}).waitFor();
+  await drawer.getByRole("button",{name:"← 返回概览",exact:true}).click();
+  const drawerHistory=drawer.locator(".overview-history-item").filter({hasText:"Historical suggestion"});
+  await drawerHistory.getByText("历史模型建议",{exact:true}).waitFor();
   assert.equal(await page.getByRole("button",{name:"Agent 分析",exact:true}).count(),0);
+  // History opens a separate modal above the node drawer; scope both explicitly.
+  await drawerHistory.click();
+  await modal("Historical suggestion").getByText("Retained historical record",{exact:true}).waitFor();
+  await modal("Historical suggestion").getByRole("button",{name:"关闭",exact:true}).click();
+  await modal("Historical suggestion").waitFor({state:"hidden"});
+  await drawer.getByRole("button",{name:"关闭节点详情",exact:true}).click();
+  await drawer.waitFor({state:"hidden"});
   await page.getByRole("link",{name:"实验记录",exact:true}).click();
   const historical=page.getByRole("row").filter({hasText:"Historical suggestion"});
   await historical.getByText("历史模型建议",{exact:false}).waitFor();
   await historical.getByRole("button",{name:"详情",exact:true}).click();
-  await page.getByRole("dialog").getByText("Retained historical record",{exact:true}).waitFor();
-  await page.getByRole("dialog").getByRole("button",{name:"关闭",exact:true}).click();
+  await modal("Historical suggestion").getByText("Retained historical record",{exact:true}).waitFor();
+  await modal("Historical suggestion").getByRole("button",{name:"关闭",exact:true}).click();
 
   await page.getByRole("link",{name:"项目管理",exact:true}).click();
   await page.getByRole("button",{name:"＋ 新建项目",exact:true}).click();
-  await page.getByRole("dialog").getByLabel("项目名称",{exact:true}).fill("Created project");
-  await page.getByRole("dialog").getByRole("button",{name:"保存",exact:true}).click();
+  await modal("新建项目").getByLabel("项目名称",{exact:true}).fill("Created project");
+  await modal("新建项目").getByRole("button",{name:"保存",exact:true}).click();
   await page.getByRole("heading",{name:"Created project",exact:true}).waitFor();
   await page.getByRole("link",{name:"研究工作区",exact:true}).click();
 
@@ -150,24 +164,33 @@ try{
   await page.getByRole("link",{name:"系统设置",exact:true}).click();
   assert.equal(await page.getByRole("button",{name:"配置模型",exact:true}).count(),0);
   await page.getByRole("button",{name:"创建 Token",exact:true}).click();
-  await page.getByRole("dialog").getByLabel("名称",{exact:true}).fill("Fixture token");
-  await page.getByRole("dialog").getByRole("button",{name:"保存",exact:true}).click();
-  await page.getByRole("heading",{name:"请保存新 Token",exact:true}).waitFor();
-  await page.getByRole("button",{name:"我已保存，关闭",exact:true}).click();
+  await modal("创建访问 Token").getByLabel("名称",{exact:true}).fill("Fixture token");
+  await modal("创建访问 Token").getByRole("button",{name:"保存",exact:true}).click();
+  await modal("请保存新 Token").getByRole("heading",{name:"请保存新 Token",exact:true}).waitFor();
+  await modal("请保存新 Token").getByRole("button",{name:"我已保存，关闭",exact:true}).click();
   assert.equal(tokenList.length,1);
   await page.getByRole("link",{name:"资源库",exact:true}).click();
   await page.getByRole("button",{name:"＋ 添加资源",exact:true}).click();
-  await page.getByRole("dialog").getByLabel("资源名称",{exact:true}).fill("Fixture resource");
-  await page.getByRole("dialog").getByLabel("链接",{exact:true}).fill("https://example.com/");
-  await page.getByRole("dialog").getByRole("button",{name:"保存",exact:true}).click();
+  await modal("添加资源").getByLabel("资源名称",{exact:true}).fill("Fixture resource");
+  await modal("添加资源").getByLabel("链接",{exact:true}).fill("https://example.com/");
+  await modal("添加资源").getByRole("button",{name:"保存",exact:true}).click();
   await page.getByRole("heading",{name:"Fixture resource",exact:true}).waitFor();
 
   await page.setViewportSize({width:390,height:844});
   await page.getByRole("link",{name:"研究工作区",exact:true}).click();
   await page.getByRole("heading",{name:"Smoke hypothesis",exact:true}).waitFor();
+  await page.locator('.node[data-node-id="node1"]').click();
+  await drawer.getByRole("button",{name:"编辑节点",exact:true}).click();
+  assert.equal(await drawer.evaluate(element=>element.matches(":modal")),true);
+  await drawer.getByLabel("节点标题",{exact:true}).fill("Mobile edited node");
+  await drawer.getByRole("button",{name:"保存节点",exact:true}).click();
+  await page.locator(".node").filter({hasText:"Mobile edited node"}).waitFor();
+  assert.equal(data.hypotheses[0].nodes[0].title,"Mobile edited node");
+  await drawer.getByRole("button",{name:"关闭节点详情",exact:true}).click();
+  await drawer.waitFor({state:"hidden"});
   await page.screenshot({path:"test-results/vue-mobile.png",fullPage:true});
   await page.getByRole("button",{name:"退出",exact:true}).click();
-  await page.getByRole("heading",{name:"工作区为空",exact:true}).waitFor();
+  await page.getByRole("heading",{name:"让每一步研究，都有迹可循",exact:true}).waitFor();
   assert.equal(await page.evaluate(()=>sessionStorage.getItem("flowmaster.connection")),null);
   assert.deepEqual(errors,[]);
   console.log("PASS: Chromium MCP login failure/retry, in-flight Cancel/Close/Escape/Back, skip-link routing, historical suggestions, desktop/mobile editing and logout with isolated mocked tools");

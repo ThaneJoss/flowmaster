@@ -43,29 +43,56 @@ try {
       }
       throw new Error('Unexpected isolated canvas MCP tool: ' + name);
     });
-    const choose = async id => { await page.locator('.node').filter({ hasText: `Node ${id}` }).click(); };
-    const waitIdle = async () => page.waitForFunction(() => [...document.querySelectorAll('button')].some(b => b.textContent === '保存节点' && !b.disabled));
-    const save = async () => { await page.getByRole('button', { name: '保存节点', exact: true }).click(); await waitIdle(); };
+    const drawer = page.locator('.node-drawer'), modal = page.locator('.ui-modal');
+    const closeDrawer = async () => {
+      if (await drawer.isVisible()) await drawer.getByRole('button', { name: '关闭节点详情', exact: true }).click();
+      await drawer.waitFor({ state: 'hidden' });
+    };
+    const expandSection = async title => {
+      const section = drawer.locator('details.editor-section').filter({ has: page.locator('summary').filter({ hasText: title }) });
+      if (!await section.evaluate(element => element.open)) await section.locator('summary').click();
+    };
+    const openEditor = async () => {
+      await drawer.waitFor({ state: 'visible' });
+      const edit = drawer.getByRole('button', { name: '编辑节点', exact: true });
+      if (await edit.isVisible()) await edit.click();
+      await drawer.locator('.node-editor').waitFor();
+      for (const title of ['研究内容', '结果与时间', '上游节点']) await expandSection(title);
+    };
+    const choose = async id => {
+      await closeDrawer();
+      await page.locator(`.node[data-node-id="${id.toLowerCase()}"]`).click();
+      await openEditor();
+    };
+    const switchHypothesis = async title => {
+      await closeDrawer();
+      if (!await page.locator('#hypothesis-list').isVisible()) await page.locator('.sidebar-toggle').click();
+      await page.locator('.hypothesis-item').filter({ hasText: title }).click();
+      await page.locator('.flow-heading').getByRole('heading', { name: title, exact: true }).waitFor();
+    };
+    const waitIdle = async () => page.waitForFunction(() => document.querySelector('.canvas-add')?.disabled === false);
+    const save = async () => { await drawer.getByRole('button', { name: '保存节点', exact: true }).click(); await waitIdle(); };
     const login = async () => {
-      await page.getByRole('button', { name: '管理员登录', exact: true }).click();
-      await page.getByRole('dialog').getByLabel('访问 Token', { exact: true }).fill('canvas-fixture-only');
-      await page.getByRole('dialog').getByRole('button', { name: '保存', exact: true }).click();
+      await page.locator('.app-header').getByRole('button', { name: '登录工作区', exact: true }).click();
+      await modal.getByLabel('访问 Token', { exact: true }).fill('canvas-fixture-only');
+      await modal.getByRole('button', { name: '保存', exact: true }).click();
       await page.getByRole('heading', { name: 'Hypothesis one', exact: true }).waitFor();
     };
     await page.goto(origin); await login();
     await choose('A');
-    await page.getByLabel('结果摘要', { exact: true }).fill('Unsaved A');
-    await choose('B'); await page.getByLabel('研究思路', { exact: true }).fill('Unsaved B');
+    await drawer.getByLabel('结果摘要', { exact: true }).fill('Unsaved A');
+    await choose('B'); await drawer.getByLabel('研究思路', { exact: true }).fill('Unsaved B');
     for (let i = 0; i < 3; i++) {
-      await page.locator('.list .item').filter({ hasText: 'Hypothesis two' }).click();
-      await choose('A'); assert.equal(await page.getByLabel('结果摘要', { exact: true }).inputValue(), '');
-      await page.locator('.list .item').filter({ hasText: 'Hypothesis one' }).click();
-      await choose('A'); assert.equal(await page.getByLabel('结果摘要', { exact: true }).inputValue(), 'Unsaved A');
-      await choose('B'); assert.equal(await page.getByLabel('研究思路', { exact: true }).inputValue(), 'Unsaved B');
+      await switchHypothesis('Hypothesis two');
+      await choose('A'); assert.equal(await drawer.getByLabel('结果摘要', { exact: true }).inputValue(), '');
+      await switchHypothesis('Hypothesis one');
+      await choose('A'); assert.equal(await drawer.getByLabel('结果摘要', { exact: true }).inputValue(), 'Unsaved A');
+      await choose('B'); assert.equal(await drawer.getByLabel('研究思路', { exact: true }).inputValue(), 'Unsaved B');
     }
     assert.equal(writes.length, 0, 'switching drafts must never save them');
     await choose('A');
-    const a = page.locator('.node').filter({ hasText: 'Node A' });
+    await closeDrawer();
+    const a = page.locator('.node[data-node-id="a"]');
     await a.scrollIntoViewIfNeeded();
     const box = await a.boundingBox(); assert.ok(box);
     const start = { x: box.x + box.width / 2, y: box.y + 30 };
@@ -83,59 +110,67 @@ try {
     await waitIdle();
     assert.equal(data.hypotheses[0].nodes[0].x, 90); assert.equal(data.hypotheses[0].nodes[0].y, 75);
     assert.equal(data.hypotheses[0].nodes[0].summary, '', 'drag only saves coordinates');
-    assert.equal(await page.getByLabel('结果摘要', { exact: true }).inputValue(), 'Unsaved A');
+    await choose('A');
+    assert.equal(await drawer.getByLabel('结果摘要', { exact: true }).inputValue(), 'Unsaved A');
+    await closeDrawer();
     await a.focus(); await a.press('ArrowRight'); await waitIdle();
     assert.equal(data.hypotheses[0].nodes[0].x, 100);
-    assert.equal(await page.getByLabel('结果摘要', { exact: true }).inputValue(), 'Unsaved A');
+    await choose('A');
+    assert.equal(await drawer.getByLabel('结果摘要', { exact: true }).inputValue(), 'Unsaved A');
     await save();
     assert.equal(data.hypotheses[0].nodes[0].x, 100, 'saving inspector must not roll back a drag');
     assert.equal(data.hypotheses[0].nodes[0].summary, 'Unsaved A');
-    assert.equal(await page.locator('.inspector .unsaved').count(), 0);
+    assert.equal(await drawer.locator('.draft-note').count(), 0);
 
     // Add a second parent, then try a genuine cycle through the real validator.
-    await choose('B'); await page.getByLabel(/^上游节点/).selectOption(['a', 'c']); await save();
+    await choose('B'); await drawer.getByLabel(/^依赖关系/).selectOption(['a', 'c']); await save();
     assert.deepEqual(data.hypotheses[0].edges, [{ source: 'a', target: 'b' }, { source: 'c', target: 'b' }]);
-    assert.equal(await page.locator('.canvas svg > path').count(), 2);
-    await choose('C'); await page.getByLabel('节点标题', { exact: true }).fill('Rejected cycle draft');
-    await page.getByLabel(/^上游节点/).selectOption(['b']); await save();
+    assert.equal(await page.locator('.canvas-connections > path').count(), 2);
+    await choose('C'); await drawer.getByLabel('节点标题', { exact: true }).fill('Rejected cycle draft');
+    await drawer.getByLabel(/^依赖关系/).selectOption(['b']); await save();
     await page.locator('#notice').filter({ hasText: '循环依赖' }).waitFor();
-    assert.equal(await page.getByLabel('节点标题', { exact: true }).inputValue(), 'Rejected cycle draft');
+    assert.equal(await drawer.getByLabel('节点标题', { exact: true }).inputValue(), 'Rejected cycle draft');
     assert.equal(data.hypotheses[0].nodes[2].title, 'Node C');
     assert.equal(data.hypotheses[0].edges.length, 2);
-    await page.getByLabel(/^上游节点/).selectOption([]); await save();
+    await drawer.getByLabel(/^依赖关系/).selectOption([]); await save();
     assert.equal(data.hypotheses[0].nodes[2].title, 'Rejected cycle draft');
 
     // A stale revision is visible, and a refreshed same-field conflict needs confirmation.
-    await choose('A'); await page.getByLabel('节点标题', { exact: true }).fill('Local conflict title');
+    await choose('A'); await drawer.getByLabel('节点标题', { exact: true }).fill('Local conflict title');
     data.hypotheses[0].nodes[0].title = 'Remote title'; data.hypotheses[0].revision++;
     await save(); await page.locator('#notice').filter({ hasText: 'Fixture revision conflict' }).waitFor();
-    assert.equal(await page.getByLabel('节点标题', { exact: true }).inputValue(), 'Local conflict title');
+    assert.equal(await drawer.getByLabel('节点标题', { exact: true }).inputValue(), 'Local conflict title');
+    await closeDrawer();
     await page.getByRole('button', { name: '刷新', exact: true }).click(); await waitIdle();
-    await page.locator('.inspector .form-error').waitFor();
+    await choose('A');
+    await drawer.locator('.form-error').waitFor();
     const beforeConflictSave = writes.length;
-    await save(); await page.getByRole('dialog').getByRole('heading', { name: '确认覆盖冲突字段', exact: true }).waitFor();
+    await save(); await modal.getByRole('heading', { name: '确认覆盖冲突字段', exact: true }).waitFor();
     assert.equal(writes.length, beforeConflictSave);
-    await page.getByRole('dialog').getByRole('button', { name: '取消', exact: true }).click();
-    assert.equal(await page.getByLabel('节点标题', { exact: true }).inputValue(), 'Local conflict title');
-    await save(); await page.getByRole('dialog').getByRole('button', { name: '确认', exact: true }).click();
-    await page.getByRole('dialog').waitFor({ state: 'hidden' }); await waitIdle();
+    await modal.getByRole('button', { name: '取消', exact: true }).click();
+    assert.equal(await drawer.getByLabel('节点标题', { exact: true }).inputValue(), 'Local conflict title');
+    await save(); await modal.getByRole('button', { name: '确认', exact: true }).click();
+    await modal.waitFor({ state: 'hidden' }); await waitIdle();
     assert.equal(data.hypotheses[0].nodes[0].title, 'Local conflict title');
 
     // Layout also refreshes the workspace; it must leave other unsaved fields alone.
-    await page.getByLabel('结果摘要', { exact: true }).fill('Keep through layout');
+    await drawer.getByLabel('结果摘要', { exact: true }).fill('Keep through layout');
+    await closeDrawer();
     await page.getByRole('button', { name: '自动布局', exact: true }).click(); await waitIdle();
-    assert.equal(await page.getByLabel('结果摘要', { exact: true }).inputValue(), 'Keep through layout');
+    await choose('A');
+    assert.equal(await drawer.getByLabel('结果摘要', { exact: true }).inputValue(), 'Keep through layout');
     assert.equal(data.hypotheses[0].nodes[0].summary, 'Unsaved A');
+    await closeDrawer();
     await page.getByRole('button', { name: '适配', exact: true }).click();
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
     mkdirSync('test-results', { recursive: true });
     await page.screenshot({ path: `test-results/canvas-${mobile ? 'mobile' : 'desktop'}.png`, fullPage: true });
     await page.getByRole('button', { name: '退出', exact: true }).click();
-    await page.getByRole('heading', { name: '工作区为空', exact: true }).waitFor();
+    await page.getByRole('heading', { name: '让每一步研究，都有迹可循', exact: true }).waitFor();
     await login();
-    await page.locator('.node').filter({ hasText: 'Local conflict title' }).click();
-    assert.equal(await page.getByLabel('结果摘要', { exact: true }).inputValue(), 'Unsaved A', 'logout clears unsaved drafts');
-    assert.equal(await page.locator('.inspector .unsaved').count(), 0);
+    await choose('A');
+    assert.equal(await drawer.getByLabel('结果摘要', { exact: true }).inputValue(), 'Unsaved A', 'logout clears unsaved drafts');
+    assert.equal(await drawer.locator('.draft-note').count(), 0);
     await context.close();
   }
   assert.deepEqual(errors, []);
