@@ -78,7 +78,7 @@ export interface Workspace {
 export type Collection = keyof Workspace;
 export type CollectionRecord<K extends Collection> = Workspace[K][number];
 export interface MutationResult<T> { data: T; affectedHypothesis?: Hypothesis; deletedExperimentIds?: string[] }
-export interface Page<T> { data: T[]; total: number }
+export interface Page<T> { data: T[]; total: number; nextOffset: number | null }
 export const nodeProgressLabel: Record<NodeProgress, string> = { pending: "待开始", in_progress: "进行中", completed: "已完成" };
 export const resultStatusLabel: Record<Status, string> = { pending: "待判定", running: "判定中", verified: "已验证", rejected: "未通过" };
 export const statusLabel: Record<Status, string> = { pending: "待验证", running: "验证中", verified: "已验证", rejected: "已丢弃" };

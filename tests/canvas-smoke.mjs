@@ -4,7 +4,7 @@ import { mkdirSync } from 'node:fs';
 import { schemas } from '../lib/server/validation.ts';
 const require = createRequire(import.meta.url);
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE);
-const browser = await chromium.launch({ headless: true });
+const browser = await chromium.launch({ headless: true, executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE });
 const origin = 'http://127.0.0.1:4173';
 const node = (id, title, x = 40, y = 40) => ({ id, title, type: 'experiment', status: 'pending', x, y, inputs: '', output: '', summary: '', rationale: '', method: '', conclusion: '', nextAction: '', startedAt: '', duration: '' });
 const hypothesis = (id, title) => ({ id, projectId: 'p1', title, description: 'Isolated canvas fixture', baseline: '', status: 'pending', revision: 1, nodes: [node('a', 'Node A'), node('b', 'Node B', 280, 40), node('c', 'Node C', 40, 210)], edges: [{ source: 'a', target: 'b' }] });
@@ -16,21 +16,34 @@ try {
     const page = await context.newPage(); activePage = page;
     page.on('pageerror', error => errors.push(error.message));
     const data = { projects: [{ id: 'p1', name: 'Fixture project', description: '', revision: 1 }], hypotheses: [hypothesis('h1', 'Hypothesis one'), hypothesis('h2', 'Hypothesis two')], experiments: [], resources: [] };
+    if (!mobile) data.hypotheses.push(...Array.from({ length: 19 }, (_, index) => hypothesis(`h${index + 3}`, `Hypothesis ${index + 3}`)));
     const writes = [];
     await page.route('**/mcp', async route => {
       const request = route.request(), rpc = request.postDataJSON();
       assert.equal(request.method(), 'POST');
       assert.equal(rpc.jsonrpc, '2.0');
       const result = value => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ jsonrpc: '2.0', id: rpc.id, result: value }) });
-      const reply = (value, status = 200) => {
-        const payload = status === 200 ? { data: value } : { error: { code: status === 409 ? 'REVISION_CONFLICT' : 'VALIDATION_ERROR', message: value }, status };
+      const reply = (value, status = 200, meta = {}) => {
+        const payload = status === 200 ? { data: value, ...meta } : { error: { code: status === 409 ? 'REVISION_CONFLICT' : 'VALIDATION_ERROR', message: value }, status };
         return result({ ...(status === 200 ? {} : { isError: true }), content: [{ type: 'text', text: JSON.stringify(payload) }], structuredContent: payload });
       };
       if (rpc.method === 'initialize') return result({ protocolVersion: '2025-11-25', capabilities: { tools: {} }, serverInfo: { name: 'FlowMaster', version: '2.0.0' } });
       if (rpc.method === 'notifications/initialized') return route.fulfill({ status: 202, body: '' });
       assert.equal(rpc.method, 'tools/call');
       const { name, arguments: args } = rpc.params;
-      if (name === 'workspace_get') return reply(data);
+      const [kind, action] = name.split('_');
+      if (data[kind] && action === 'list') {
+        const records = data[kind].filter(item => {
+          const projectId = kind === 'experiments' ? data.hypotheses.find(h => h.id === item.hypothesisId)?.projectId : kind === 'projects' ? item.id : item.projectId;
+          return (!args.projectId || projectId === args.projectId) && (!args.status || item.status === args.status)
+            && (!args.q || JSON.stringify(item).toLowerCase().includes(args.q.toLowerCase()))
+            && (kind !== 'experiments' || (!args.hypothesisId || item.hypothesisId === args.hypothesisId) && (!args.nodeId || item.nodeId === args.nodeId));
+        });
+        const offset = args.offset || 0, items = records.slice(offset, offset + (args.limit || 50));
+        const next = offset + items.length;
+        return reply(items, 200, { total: records.length, nextOffset: next < records.length ? next : null });
+      }
+      if (data[kind] && action === 'get') return reply(data[kind].find(item => item.id === args.id));
       if (name === 'hypotheses_update') {
         const payload = args.data, index = data.hypotheses.findIndex(h => h.id === args.id);
         assert.equal(payload.id, args.id);
@@ -79,10 +92,18 @@ try {
       await page.getByRole('heading', { name: 'Hypothesis one', exact: true }).waitFor();
     };
     await page.goto(origin); await login();
+    if (!mobile) {
+      const sidebar = page.locator('#hypothesis-list');
+      const lastHypothesis = sidebar.getByRole('button', { name: /Hypothesis 21/ });
+      assert.equal(await lastHypothesis.count(), 0);
+      await sidebar.locator('[aria-label="假设分页"]').getByRole('button', { name: '加载更多', exact: true }).click();
+      await lastHypothesis.waitFor({ state: 'visible' });
+      await page.locator('.flow-heading').getByRole('heading', { name: 'Hypothesis one', exact: true }).waitFor();
+    }
     await choose('A');
     await drawer.getByLabel('结果摘要', { exact: true }).fill('Unsaved A');
-    await choose('B'); await drawer.getByLabel('研究思路', { exact: true }).fill('Unsaved B');
-    for (let i = 0; i < 3; i++) {
+    if (!mobile) {
+      await choose('B'); await drawer.getByLabel('研究思路', { exact: true }).fill('Unsaved B');
       await switchHypothesis('Hypothesis two');
       await choose('A'); assert.equal(await drawer.getByLabel('结果摘要', { exact: true }).inputValue(), '');
       await switchHypothesis('Hypothesis one');
@@ -112,6 +133,15 @@ try {
     assert.equal(data.hypotheses[0].nodes[0].summary, '', 'drag only saves coordinates');
     await choose('A');
     assert.equal(await drawer.getByLabel('结果摘要', { exact: true }).inputValue(), 'Unsaved A');
+    if (mobile) {
+      assert.equal(await drawer.evaluate(element => element.matches(':modal')), true);
+      await save();
+      assert.equal(data.hypotheses[0].nodes[0].summary, 'Unsaved A');
+      await closeDrawer();
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
+      await context.close();
+      continue;
+    }
     await closeDrawer();
     await a.focus(); await a.press('ArrowRight'); await waitIdle();
     assert.equal(data.hypotheses[0].nodes[0].x, 100);
@@ -163,8 +193,6 @@ try {
     await closeDrawer();
     await page.getByRole('button', { name: '适配', exact: true }).click();
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
-    mkdirSync('test-results', { recursive: true });
-    await page.screenshot({ path: `test-results/canvas-${mobile ? 'mobile' : 'desktop'}.png`, fullPage: true });
     await page.getByRole('button', { name: '退出', exact: true }).click();
     await page.getByRole('heading', { name: '让每一步研究，都有迹可循', exact: true }).waitFor();
     await login();

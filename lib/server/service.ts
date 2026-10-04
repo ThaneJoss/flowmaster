@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { demoWorkspace } from "../demo.ts";
-import type { Collection, Experiment, FlowNode, Hypothesis, Workspace } from "../types.ts";
+import type { Collection, Experiment, FlowNode, Hypothesis, Page, Workspace } from "../types.ts";
 import { schemas, tokenSchema, resultSchema, nodeOperationSchemas } from "./validation.ts";
 import { fail, hash, now, requireScope, type Bindings, type Principal } from "./auth.ts";
 
@@ -8,16 +8,22 @@ export interface ServiceResult<T = unknown> {
     data: T;
     status?: number;
     total?: number;
+    nextOffset?: number | null;
     affectedHypothesis?: Hypothesis;
     deletedExperimentIds?: string[];
 }
 interface Row { id: string; kind: Collection; data: string; revision: number; updated_at: string }
+interface PageRow extends Omit<Row, "data"> { data: string | null; node_title: string | null }
 type Document = Record<string, any>;
 type NodeOperation = keyof typeof nodeOperationSchemas;
 const encoder = new TextEncoder();
+const maxDocumentBytes = 600000;
+const maxPageBytes = 1000000;
+// Reserve the data array delimiters, total, nextOffset and their JSON keys.
+const pageDataBytes = maxPageBytes - 128;
 function serializeDocument(value: Document): string {
     const serialized = JSON.stringify(value);
-    if (encoder.encode(serialized).byteLength > 600000) fail(413, "DOCUMENT_TOO_LARGE", "单条研究记录超过 600 KB，请减少字段内容或拆分研究流程");
+    if (encoder.encode(serialized).byteLength > maxDocumentBytes) fail(413, "DOCUMENT_TOO_LARGE", "单条研究记录超过 600 KB，请减少字段内容或拆分研究流程");
     return serialized;
 }
 const collections = new Set<Collection>(["projects", "hypotheses", "experiments", "resources"]);
@@ -102,7 +108,7 @@ export function createWorkspaceService(env: Bindings, principal: Principal) {
         data.experiments = await withSnapshots(data.experiments, data.hypotheses) as Experiment[];
         return { data };
     }
-    async function list(kind: Collection, options: Record<string, unknown> = {}): Promise<ServiceResult<Document[]>> {
+    async function list(kind: Collection, options: Record<string, unknown> = {}): Promise<Page<Document>> {
         kindCheck(kind);
         const query = parse(z.object({
             limit: z.coerce.number().int().min(1).max(200).default(50), offset: z.coerce.number().int().min(0).default(0),
@@ -119,14 +125,68 @@ export function createWorkspaceService(env: Bindings, principal: Principal) {
         if (query.nodeId && kind === "experiments") { where.push("json_extract(data,'$.nodeId') = ?"); params.push(query.nodeId); }
         if (query.status) { where.push("json_extract(data,'$.status') = ?"); params.push(query.status); }
         const condition = where.join(" AND ");
-        const order = kind === "experiments" ? `julianday(${recordTime}) DESC,id` : "updated_at DESC,id";
+        const sortTime = kind === "experiments" ? `julianday(${recordTime})` : "updated_at";
+        // Resolve only the matching node's title, never entire parent documents.
+        // The same expression participates in the size estimate and final read.
+        const nodeTitle = kind === "experiments" ? `CASE WHEN COALESCE(json_extract(d.data, '$.nodeTitle'), '') = '' THEN COALESCE(NULLIF((
+            SELECT json_extract(n.value, '$.title') FROM documents h, json_each(h.data, '$.nodes') n
+            WHERE h.kind = 'hypotheses' AND h.id = json_extract(d.data, '$.hypothesisId')
+                AND json_extract(n.value, '$.id') = json_extract(d.data, '$.nodeId')
+            ORDER BY CAST(n.key AS INTEGER) LIMIT 1
+        ), ''), '已删除节点 (' || json_extract(d.data, '$.nodeId') || ')') END` : "NULL";
+        const supported = `bounded.data_bytes <= ${maxDocumentBytes} AND bounded.page_bytes <= ${pageDataBytes}`;
         const results = await db.batch([
-            db.prepare(`SELECT id,kind,data,revision,updated_at FROM documents WHERE ${condition} ORDER BY ${order} LIMIT ? OFFSET ?`).bind(...params, query.limit, query.offset),
+            // Materialize IDs and byte counts before fetching bodies. A plain
+            // LIMIT 200 could otherwise transfer 120 MB of valid documents.
+            // One statement keeps the estimates and fetched records consistent.
+            db.prepare(`WITH candidates AS MATERIALIZED (
+                SELECT id, ${sortTime} AS sort_time FROM documents WHERE ${condition}
+                ORDER BY sort_time DESC,id LIMIT ? OFFSET ?
+            ), sizes AS MATERIALIZED (
+                SELECT candidates.id, candidates.sort_time, length(CAST(d.data AS BLOB)) AS data_bytes,
+                    length(CAST(d.data AS BLOB)) + length(CAST(json_quote(d.id) AS BLOB))
+                    + length(CAST(json_quote(d.updated_at) AS BLOB))
+                    + length(CAST(json_quote(${nodeTitle}) AS BLOB)) + 256 AS page_bytes
+                FROM candidates JOIN documents d ON d.id = candidates.id
+            ), bounded AS (
+                SELECT *, SUM(page_bytes) OVER (ORDER BY sort_time DESC,id ROWS UNBOUNDED PRECEDING) AS running_bytes,
+                    ROW_NUMBER() OVER (ORDER BY sort_time DESC,id) AS position FROM sizes
+            ) SELECT
+                CASE WHEN ${supported} THEN d.id END AS id,
+                CASE WHEN ${supported} THEN d.kind END AS kind,
+                CASE WHEN ${supported} THEN d.data END AS data,
+                CASE WHEN ${supported} THEN d.revision END AS revision,
+                CASE WHEN ${supported} THEN d.updated_at END AS updated_at,
+                CASE WHEN ${supported} THEN ${nodeTitle} END AS node_title
+            FROM bounded JOIN documents d ON d.id = bounded.id
+            WHERE running_bytes <= ${pageDataBytes} OR position = 1
+            ORDER BY bounded.sort_time DESC,bounded.id`).bind(...params, query.limit, query.offset),
             db.prepare(`SELECT count(*) AS total FROM documents WHERE ${condition}`).bind(...params),
         ]);
-        let items = (results[0].results as unknown as Row[]).map(unpack);
-        if (kind === "experiments") items = await withSnapshots(items);
-        return { data: items, total: Number((results[1].results[0] as { total: number }).total) };
+        const items: Document[] = [];
+        let bytes = 0;
+        for (const row of results[0].results as unknown as PageRow[]) {
+            // Oversized legacy records remain at their offset: report an error
+            // when reached instead of silently skipping or returning an empty page.
+            if (row.data === null) {
+                if (items.length) break;
+                fail(413, "DOCUMENT_TOO_LARGE", "单条研究记录超过分页大小限制，请减少字段内容或拆分研究流程");
+            }
+            const item = unpack({ ...row, data: row.data });
+            if (kind === "experiments") item.nodeTitle = item.nodeTitle || row.node_title || `已删除节点 (${item.nodeId})`;
+            // JSON number normalization and inferred legacy fields can change
+            // the serialized size. Count the final UTF-8 JSON, including commas.
+            const itemBytes = encoder.encode(JSON.stringify(item)).byteLength + 1;
+            if (bytes + itemBytes > pageDataBytes) {
+                if (items.length) break;
+                fail(413, "DOCUMENT_TOO_LARGE", "单条研究记录超过分页大小限制，请减少字段内容或拆分研究流程");
+            }
+            items.push(item);
+            bytes += itemBytes;
+        }
+        const total = Number((results[1].results[0] as { total: number }).total);
+        const nextOffset = query.offset + items.length;
+        return { data: items, total, nextOffset: nextOffset < total ? nextOffset : null };
     }
     async function get(kind: Collection, id: string): Promise<ServiceResult<Document>> {
         kindCheck(kind);
@@ -294,7 +354,7 @@ export function createWorkspaceService(env: Bindings, principal: Principal) {
         if (kind === "projects" && await db.prepare("SELECT id FROM documents WHERE project_id = ? LIMIT 1").bind(id).first()) fail(409, "PROJECT_NOT_EMPTY", "请先删除项目下的研究流程和资料");
         let guard = "", params: unknown[] = [];
         if (kind === "resources") { await checkReferences(id); guard = `AND NOT ${referencedResource}`; params = [id, id]; }
-        const experiments = kind === "hypotheses" ? await children(id) : [];
+        const experiments = kind === "hypotheses" ? (await db.prepare("SELECT id FROM documents WHERE kind = 'experiments' AND parent_id = ? ORDER BY updated_at DESC,id").bind(id).all<{ id: string }>()).results : [];
         // Foreign keys cascade a hypothesis's experiments in this same write.
         const result = await db.prepare(`DELETE FROM documents WHERE kind=? AND id=? AND revision=? ${guard}`).bind(kind, id, current.revision, ...params).run();
         await conflict(result.meta.changes);

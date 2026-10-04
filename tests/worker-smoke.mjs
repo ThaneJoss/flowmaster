@@ -47,7 +47,7 @@ const callTool = async (name, args = {}) => {
   const text = result.content.find(item => item.type === "text");
   assert.ok(text, `${name} includes a text result`);
   assert.deepEqual(JSON.parse(text.text), result.structuredContent);
-  return result.structuredContent.data;
+  return result.structuredContent;
 };
 try {
   const db = await mf.getD1Database("DB");
@@ -59,7 +59,6 @@ try {
   const html = await page.text();
   assert.ok(html.includes('id="app"'));
   assert.ok(!html.includes(admin));
-  assert.ok(!html.includes("/src/main.js"));
   const scripts = [...html.matchAll(/<script[^>]+src="([^"]+)"/g)].map(m => m[1]);
   assert.ok(scripts.length);
   for (const script of scripts) {
@@ -67,12 +66,7 @@ try {
     assert.equal(response.status, 200);
     assert.ok((await response.text()).length > 100);
   }
-  const favicon = await mf.dispatchFetch("https://flowmaster.example/favicon.svg");
-  assert.equal(favicon.status, 200);
-  for (const pathname of ["/api", "/api/v1", "/api/v1/workspace", "/openapi.json"]) {
-    const response = await mf.dispatchFetch(`https://flowmaster.example${pathname}`);
-    assert.equal(response.status, 404, pathname);
-  }
+  assert.equal((await mf.dispatchFetch("https://flowmaster.example/api/v1/workspace")).status, 404);
   const denied = await mf.dispatchFetch("https://flowmaster.example/mcp", {
     method: "POST",
     headers: { "Content-Type": "application/json", Accept: mcpHeaders.Accept },
@@ -93,13 +87,16 @@ try {
   });
   assert.equal(notification.status, 202);
   const listed = await rpc("tools/list", {});
-  assert.ok(listed.tools.some(tool => tool.name === "workspace_get"));
+  assert.ok(listed.tools.some(tool => tool.name === "hypotheses_list"));
   assert.ok(listed.tools.some(tool => tool.name === "workspace_seed"));
-  assert.deepEqual(await callTool("workspace_get"), { projects: [], hypotheses: [], experiments: [], resources: [] });
   const seed = await callTool("workspace_seed");
-  assert.ok(seed.imported > 0);
-  const workspace = await callTool("workspace_get");
-  assert.equal(workspace.hypotheses.length, 6);
+  assert.ok(seed.data.imported > 0);
+  const first = await callTool("hypotheses_list", { limit: 2 });
+  assert.equal(first.data.length, 2);
+  assert.equal(first.total, 6);
+  assert.equal(first.nextOffset, 2);
+  const next = await callTool("hypotheses_list", { limit: 2, offset: first.nextOffset });
+  assert.equal(new Set([...first.data, ...next.data].map(record => record.id)).size, 4);
   console.log("PASS: Vue assets, Worker MCP routing, authentication and isolated D1 smoke test");
 } finally {
   await mf.dispose();

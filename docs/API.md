@@ -47,24 +47,34 @@ MCP 客户端需手动配置 Bearer Token。本服务不提供 OAuth 或 OAuth �
 | --- | --- | --- |
 | `workspace_get` | `{}` | read |
 | `workspace_seed` | `{}`，只向空库导入示例 | admin |
-| `projects_list`、`experiments_list` | `{limit?, offset?, q?}` | read |
-| `hypotheses_list`、`resources_list` | `{limit?, offset?, q?, projectId?}` | read |
+| `projects_list` | `{limit?, offset?, q?}` | read |
+| `hypotheses_list` | `{limit?, offset?, q?, projectId?, status?}` | read |
+| `experiments_list` | `{limit?, offset?, q?, projectId?, hypothesisId?, nodeId?, status?}` | read |
+| `resources_list` | `{limit?, offset?, q?, projectId?}` | read |
 | `projects_get`、`hypotheses_get`、`experiments_get`、`resources_get` | `{id}` | read |
 | `projects_create`、`hypotheses_create`、`experiments_create`、`resources_create` | `{data}` | write |
-| `projects_update`、`hypotheses_update`、`experiments_update`、`resources_update` | `{id, data}`，`data` 为完整业务记录且包含最新 `revision` | write |
+| `projects_update`、`hypotheses_update`、`experiments_update`、`resources_update` | `{id, data}`，`data` 包含最新 `revision` 和待修改字段 | write |
 | `projects_delete`、`hypotheses_delete`、`experiments_delete`、`resources_delete` | `{id}` | write |
 | `results_create` | `{hypothesisId, data: {nodeId, title, status, summary, duration?}}` | write |
 | `tokens_list` | `{}` | admin |
 | `tokens_create` | `{data: {name, scope, expiresInDays}}` | admin |
 | `tokens_revoke` | `{id}` | admin |
 
-列表默认 `limit: 50`、`offset: 0`；`limit` 为 1–200 的整数，`offset` 为非负整数，`q` 为搜索文本。`projectId` 筛选仅适用于假设和资源。列表成功响应在 `structuredContent.total` 中提供匹配总数。
+列表默认 `limit: 50`、`offset: 0`；`limit` 为 1–200 的整数，`offset` 为非负整数，`q` 为搜索文本。`projectId` 可筛选假设、实验和资源，实验通过所属假设匹配项目。
 
-`workspace_get` 返回 `projects`、`hypotheses`、`experiments`、`resources` 四个数组；快照最多 5,000 条记录及约 8 MB 的记录 JSON，超过后使用列表工具分页。删除非空项目会失败；删除假设会同时删除所属实验记录。
+列表成功响应在 `structuredContent` 中提供 `{data, total, nextOffset}`。`total` 是当前筛选条件下的匹配总数；`nextOffset` 是下一次请求的 `offset`，为 `null` 时表示末页。服务端同时限制页内记录数和序列化字节数，因此一页少于 `limit` 条也可能还有下一页。客户端必须使用 `nextOffset`，不能依据短页判断结束，也不能自行将 `offset` 加上请求的 `limit`。
+
+```json
+{"data": [{"id": "example", "name": "示例项目"}], "total": 8, "nextOffset": 1}
+```
+
+后续请求保留原筛选条件并传入 `offset: 1`。分页期间若其他客户端修改或删除记录，偏移位置和总数可能变化；分页不是固定时点快照，重新加载列表可获取最新排序。
+
+`workspace_get` 返回 `projects`、`hypotheses`、`experiments`、`resources` 四个数组；快照最多 5,000 条记录及约 8 MB 的记录 JSON，超过后使用列表工具分页。网页登录和列表浏览使用分页工具，不依赖此快照。删除非空项目会失败；删除假设会同时删除所属实验记录。
 
 ## 业务输入
 
-创建时 `id` 可省略，由服务生成；更新是完整记录替换，需要最新 `revision`，不支持局部 PATCH。`updatedAt` 与新 revision 由服务生成。以下字段之外的具体限制以 `tools/list` 的输入 schema 为准。
+创建时 `id` 可省略，由服务生成；更新需要最新 `revision`，未提供的字段保留原值，传入数组时替换整个数组。`updatedAt` 与新 revision 由服务生成。以下字段之外的具体限制以 `tools/list` 的输入 schema 为准。
 
 | 集合 | 必需字段 | 其他字段 |
 | --- | --- | --- |

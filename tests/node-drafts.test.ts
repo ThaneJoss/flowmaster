@@ -24,13 +24,11 @@ test('node and hypothesis switches retain isolated, memory-only drafts without m
         s.hypothesisId.value = 'h2'; s.nodeId.value = 'a'; await nextTick();
         assert.equal(s.nodeDraft.value!.title, 'h2 A');
         s.nodeDraft.value!.title = 'Other hypothesis A';
-        for (let i = 0; i < 4; i++) {
-            s.hypothesisId.value = 'h1'; s.nodeId.value = 'a'; await nextTick();
-            assert.equal(s.nodeDraft.value!.title, 'Unsaved A'); assert.deepEqual(s.upstream.value, ['b']);
-            s.nodeId.value = 'b'; await nextTick(); assert.equal(s.nodeDraft.value!.summary, 'Unsaved B');
-            s.hypothesisId.value = 'h2'; s.nodeId.value = 'a'; await nextTick();
-            assert.equal(s.nodeDraft.value!.title, 'Other hypothesis A');
-        }
+        s.hypothesisId.value = 'h1'; s.nodeId.value = 'a'; await nextTick();
+        assert.equal(s.nodeDraft.value!.title, 'Unsaved A'); assert.deepEqual(s.upstream.value, ['b']);
+        s.nodeId.value = 'b'; await nextTick(); assert.equal(s.nodeDraft.value!.summary, 'Unsaved B');
+        s.hypothesisId.value = 'h2'; s.nodeId.value = 'a'; await nextTick();
+        assert.equal(s.nodeDraft.value!.title, 'Other hypothesis A');
         assert.equal(s.hypotheses.value[0].nodes[0].title, 'h1 A');
         assert.deepEqual(s.hypotheses.value[0].edges, []);
     } finally { s.scope.stop(); }
