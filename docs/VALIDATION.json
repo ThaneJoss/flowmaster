@@ -1,17 +1,73 @@
 {
   "architecture": "Vue 3 + Vite static frontend + standalone Worker MCP server + D1",
-  "status": "typecheck-and-build-passed-tests-not-run",
+  "status": "local-checks-passed",
+  "validatedOn": "2026-10-05",
   "localExecution": true,
-  "change": "Wrap canvas layout to viewport width, preserve readable zoom, route edges across rows and place new nodes without overlap",
+  "change": "Paginated workspace browsing, byte-bounded collection lists, authoritative mutation updates with separate refresh errors, complete paginated exports, and obsolete/duplicate test cleanup",
   "checksRun": [
-    { "command": "pnpm check", "status": "passed" },
-    { "command": "pnpm build", "status": "passed" },
-    { "command": "pnpm deploy:check", "status": "passed" }
+    {
+      "command": "pnpm check",
+      "status": "passed"
+    },
+    {
+      "command": "pnpm test",
+      "status": "passed",
+      "tests": 37
+    },
+    {
+      "command": "node --experimental-strip-types --test tests/client.test.ts tests/workspace-export.test.ts",
+      "status": "passed-separately-after-final-helper-and-client-changes"
+    },
+    {
+      "command": "pnpm build",
+      "status": "passed"
+    },
+    {
+      "command": "wrangler deploy --dry-run --outdir .worker-build",
+      "status": "passed"
+    },
+    {
+      "command": "node tests/worker-smoke.mjs",
+      "status": "passed",
+      "scope": "Isolated local Worker/D1 and built static assets"
+    },
+    {
+      "command": "node tests/browser-smoke.mjs",
+      "status": "passed",
+      "scope": "Mocked MCP: login retry/cancellation, pagination, save-success/refresh-failure, token issuance, logout"
+    },
+    {
+      "command": "node tests/canvas-smoke.mjs",
+      "status": "passed",
+      "scope": "Mocked MCP: desktop/touch dragging, keyboard movement, drafts, layout, DAG validation, revision conflicts"
+    },
+    {
+      "command": "node scripts/check-deployment.mjs",
+      "status": "passed-local-only"
+    },
+    {
+      "command": "git diff --check",
+      "status": "passed"
+    },
+    {
+      "check": "Focused independent browser review",
+      "status": "passed",
+      "scope": "25 hypotheses: off-page graph and draft survive refresh, linked resource refresh, remote 404 removal and draft eviction"
+    }
+  ],
+  "regressionsVerified": [
+    "5001 records: snapshot rejects, collection pagination returns all records without gaps or duplicates",
+    "600000-byte UTF-8 records and enriched experiment titles remain within the 1000000-byte structured page budget",
+    "Short pages follow nextOffset, including full and filtered JSON exports",
+    "Confirmed writes close forms and are not retried when a later refresh fails",
+    "Logout and account switches discard stale requests",
+    "Real pointer can reach hypothesis pagination controls with more than 20 entries",
+    "Off-page graph and unsaved drafts survive refresh; confirmed remote deletion removes stale drafts"
   ],
   "notYetVerified": [
-    "Unit and integration tests for responsive canvas layout",
-    "Browser verification of desktop and mobile canvas wrapping, zoom and dragging",
-    "Cloudflare preview or production deployment"
+    "Cloudflare preview or production deployment, remote bindings, secrets and migrations",
+    "Production load and deep-offset performance",
+    "Consistent snapshot export during concurrent remote mutations"
   ],
-  "notes": "Tests were not run, as requested. Type checking, Vue compilation and Worker packaging passed; these do not replace browser interaction or visual verification. No remote deployment is claimed."
+  "notes": "Used Node 24.19.0 and pinned pnpm 11.25.0. Browser checks used Playwright 1.61.1 with system Chromium. No remote deployment or production data changes."
 }

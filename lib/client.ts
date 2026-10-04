@@ -1,25 +1,32 @@
+import type { MutationResult } from "./types.ts";
+
 export interface Connection {
     baseUrl: string;
     token: string;
     remember: boolean;
 }
 // Keep the UI's collection operations local; all requests use MCP tools over /mcp.
-export type ApiClient = <T = any>(path: string, options?: RequestInit) => Promise<T>;
+export interface ApiPage<T> { data: T[]; total: number; nextOffset: number | null }
+export interface ApiClient {
+    <T = any>(path: string, options?: RequestInit): Promise<T>;
+    page<T>(path: string, options?: RequestInit): Promise<ApiPage<T>>;
+    mutation<T>(path: string, options?: RequestInit): Promise<MutationResult<T>>;
+}
+export interface ApiError extends Error { status?: number; code?: string | number }
 export const isRequestCancelled = (error: unknown) => error instanceof Error && error.name === "AbortError";
 
 const protocolVersion = "2025-11-25";
 interface ToolCall { name: string; arguments: Record<string, unknown> }
-interface ToolPayload { data?: unknown; error?: { message?: string }; status?: number }
-interface ToolResult {
-    structuredContent?: ToolPayload;
-    content?: { type: string; text?: string }[];
-    isError?: boolean;
-}
-interface RpcResponse {
-    jsonrpc?: string;
-    id?: number;
-    result?: unknown;
-    error?: { message?: string };
+type ToolPayload = Record<string, unknown> & { data: unknown };
+const isRecord = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === "object" && !Array.isArray(value);
+const errorMessage = (value: unknown) => isRecord(value) && typeof value.message === "string" ? value.message : undefined;
+const isOffset = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+
+function requestError(message: string, status?: unknown, details?: unknown): ApiError {
+    const error: ApiError = new Error(message);
+    if (typeof status === "number" && Number.isInteger(status) && status >= 100 && status <= 599) error.status = status;
+    if (isRecord(details) && (typeof details.code === "string" || typeof details.code === "number" && Number.isFinite(details.code))) error.code = details.code;
+    return error;
 }
 
 function endpointFor(baseUrl: string): string {
@@ -55,8 +62,12 @@ function toolFor(path: string, options: RequestInit): ToolCall {
         if (method === "GET") {
             const args: Record<string, unknown> = {};
             for (const [key, value] of new URLSearchParams(query)) {
-                if (!["limit", "offset", "q", "projectId"].includes(key)) throw new Error(`不支持的列表参数：${key}`);
-                args[key] = key === "limit" || key === "offset" ? Number(value) : value;
+                if (!["limit", "offset", "q", "projectId", "status", "hypothesisId", "nodeId"].includes(key)) throw new Error(`不支持的列表参数：${key}`);
+                if (key === "limit" || key === "offset") {
+                    const number = Number(value);
+                    if (!value.trim() || !isOffset(number) || key === "limit" && number === 0) throw new Error(`无效的分页参数：${key}`);
+                    args[key] = number;
+                } else args[key] = value;
             }
             return { name: `${name}_list`, arguments: args };
         }
@@ -111,17 +122,18 @@ export function makeClient(connection: Connection, sessionSignal?: AbortSignal):
         });
         signal.throwIfAborted();
         if (notification && response.ok) return;
-        let body: RpcResponse;
+        let body: unknown;
         try {
-            body = await response.json() as RpcResponse;
+            body = await response.json();
         } catch {
             signal.throwIfAborted();
-            throw new Error(`服务未返回 MCP JSON（${response.status}），请检查服务地址`);
+            throw requestError(`服务未返回 MCP JSON（${response.status}），请检查服务地址`, response.status);
         }
         // Decoding can finish after logout; never publish the old session's data.
         signal.throwIfAborted();
-        if (!response.ok || body?.error) throw new Error(body?.error?.message || `MCP 请求失败（${response.status}）`);
-        if (body?.jsonrpc !== "2.0" || body.id !== id || !("result" in body)) throw new Error("服务返回了无效的 MCP 响应");
+        const error = isRecord(body) ? body.error : undefined;
+        if (!response.ok || error) throw requestError(errorMessage(error) || `MCP 请求失败（${response.status}）`, response.status, error);
+        if (!isRecord(body) || body.jsonrpc !== "2.0" || body.id !== id || !("result" in body)) throw new Error("服务返回了无效的 MCP 响应");
         if (method === "initialize") mcpSessionId = response.headers.get("Mcp-Session-Id");
         return body.result;
     }
@@ -146,23 +158,56 @@ export function makeClient(connection: Connection, sessionSignal?: AbortSignal):
         return initialization;
     }
 
-    return async <T,>(path: string, options: RequestInit = {}) => {
+    async function request(path: string, options: RequestInit = {}, listOnly = false): Promise<{ payload: ToolPayload; call: ToolCall }> {
         const signal = requestSignal(options.signal);
         signal.throwIfAborted();
         const call = toolFor(path, options);
+        if (listOnly && !/^(projects|hypotheses|experiments|resources)_list$/.test(call.name)) throw new Error("分页请求需要集合列表操作");
         await waitFor(initialize(), signal);
         signal.throwIfAborted();
-        const result = await rpc("tools/call", call, signal) as ToolResult | null;
+        const result = await rpc("tools/call", call, signal);
         signal.throwIfAborted();
-        let payload = result?.structuredContent;
-        const text = result?.content?.find(item => item.type === "text" && typeof item.text === "string")?.text;
+        if (!isRecord(result)) throw new Error("服务返回了无效的 MCP 工具结果");
+        let payload = result.structuredContent;
+        const content = Array.isArray(result.content) ? result.content : [];
+        const text = content.find((item: unknown) => isRecord(item) && item.type === "text" && typeof item.text === "string")?.text as string | undefined;
         if (!payload) {
             if (text) {
-                try { payload = JSON.parse(text) as ToolPayload; } catch { /* Report an invalid tool response below. */ }
+                try { payload = JSON.parse(text); } catch { /* Report an invalid tool response below. */ }
             }
         }
-        if (result?.isError || payload?.error) throw new Error(payload?.error?.message || text || "MCP 工具调用失败");
-        if (!payload || typeof payload !== "object" || !("data" in payload)) throw new Error("服务返回了无效的 MCP 工具结果");
-        return payload.data as T;
+        const error = isRecord(payload) ? payload.error : undefined;
+        if (result.isError || error) throw requestError(errorMessage(error) || text || "MCP 工具调用失败", isRecord(payload) ? payload.status : undefined, error);
+        if (!isRecord(payload) || !("data" in payload)) throw new Error("服务返回了无效的 MCP 工具结果");
+        return { payload: payload as ToolPayload, call };
+    }
+
+    const client: ApiClient = async <T,>(path: string, options?: RequestInit) => (await request(path, options)).payload.data as T;
+    client.page = async <T,>(path: string, options?: RequestInit): Promise<ApiPage<T>> => {
+        const { payload, call } = await request(path, options, true);
+        const offset = call.arguments.offset ?? 0;
+        if (!isOffset(offset) || !Array.isArray(payload.data) || !isOffset(payload.total)) {
+            throw new Error("服务返回了无效的 MCP 分页结果");
+        }
+        let nextOffset = payload.nextOffset;
+        if (!Object.hasOwn(payload, "nextOffset")) {
+            // Older servers can return short pages due to their byte budget.
+            // Only total, not the requested limit, determines completion.
+            nextOffset = offset + payload.data.length < payload.total ? offset + payload.data.length : null;
+        }
+        if (nextOffset !== null && (!isOffset(nextOffset) || nextOffset <= offset)) throw new Error("服务返回了无法继续的 MCP 分页结果");
+        return { data: payload.data as T[], total: payload.total, nextOffset };
     };
+    client.mutation = async <T,>(path: string, options?: RequestInit): Promise<MutationResult<T>> => {
+        const { payload } = await request(path, options);
+        if (payload.affectedHypothesis !== undefined && !isRecord(payload.affectedHypothesis) || payload.deletedExperimentIds !== undefined && (!Array.isArray(payload.deletedExperimentIds) || payload.deletedExperimentIds.some(id => typeof id !== "string"))) {
+            throw new Error("服务返回了无效的 MCP 工具结果");
+        }
+        return {
+            data: payload.data as T,
+            ...(payload.affectedHypothesis === undefined ? {} : { affectedHypothesis: payload.affectedHypothesis as unknown as MutationResult<T>["affectedHypothesis"] }),
+            ...(payload.deletedExperimentIds === undefined ? {} : { deletedExperimentIds: payload.deletedExperimentIds as string[] }),
+        };
+    };
+    return client;
 }

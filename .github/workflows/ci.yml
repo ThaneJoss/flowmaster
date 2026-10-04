@@ -35,10 +35,10 @@ jobs:
           trap 'kill "$server_pid" 2>/dev/null || true' EXIT
           PLAYWRIGHT_MODULE=/tmp/flowmaster-browser/node_modules/playwright node tests/browser-smoke.mjs
           PLAYWRIGHT_MODULE=/tmp/flowmaster-browser/node_modules/playwright node tests/canvas-smoke.mjs
-      - name: Save UI screenshots
-        if: always()
+      - name: Save browser failure screenshots
+        if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: vue-ui-screenshots
-          path: test-results/*.png
+          name: browser-failure-screenshots
+          path: test-results/*-failure.png
           if-no-files-found: ignore

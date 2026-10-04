@@ -8,8 +8,8 @@ import { schemas, updateSchemas, resultSchema, tokenSchema, idSchema, nodeOperat
 import { createWorkspaceService, type ServiceResult } from "./service.ts";
 
 const pagination = {
-    limit: z.number().int().min(1).max(200).optional().describe("Page size; defaults to 50."),
-    offset: z.number().int().min(0).optional().describe("Zero-based offset; defaults to 0."),
+    limit: z.number().int().min(1).max(200).optional().describe("Maximum records per page; defaults to 50. The byte budget may return fewer."),
+    offset: z.number().int().min(0).optional().describe("Zero-based offset; defaults to 0. Use the previous page's nextOffset to continue."),
     q: z.string().max(200).optional().describe("Search the stored record contents."),
 };
 const maxBodyBytes = 600000;
@@ -42,7 +42,7 @@ function createServer(env: Bindings, principal: Principal) {
             ...(collection === "hypotheses" || collection === "experiments" ? { status: z.enum(["pending", "running", "verified", "rejected"]).optional() } : {}),
             ...(collection === "experiments" ? { hypothesisId: idSchema.optional(), nodeId: idSchema.optional() } : {}),
         }).strict();
-        server.registerTool(`${collection}_list`, { description: `List ${collection} with pagination and filters (read permission). Returns data and total. Experiment order uses fixed recording time.`, inputSchema: listInput, annotations: readOnly }, args => invoke(() => service.list(collection, args)));
+        server.registerTool(`${collection}_list`, { description: `List ${collection} with pagination and filters (read permission). Returns data, total and nextOffset. Pages are byte-limited; continue at nextOffset until it is null, even for short pages. Experiment order uses fixed recording time.`, inputSchema: listInput, annotations: readOnly }, args => invoke(() => service.list(collection, args)));
         server.registerTool(`${collection}_get`, { description: `Read one ${collection} record with its revision (read permission).`, inputSchema: { id: idSchema }, annotations: readOnly }, ({ id }) => invoke(() => service.get(collection, id)));
         server.registerTool(`${collection}_create`, { description: `Create a ${collection} record (write permission). Experiment creation records a manual result and selects it on its node; returns affectedHypothesis.`, inputSchema: { data: schemas[collection] }, annotations: collection === "experiments" ? update : create }, ({ data }) => invoke(() => service.create(collection, data)));
         server.registerTool(`${collection}_update`, { description: `Update ${collection} fields with its latest revision (write permission). Omitted fields are preserved. Experiment association, source and recording time are fixed. Result changes also return affectedHypothesis.`, inputSchema: { id: idSchema, data: updateSchemas[collection] }, annotations: update }, ({ id, data }) => invoke(() => service.update(collection, id, data)));
