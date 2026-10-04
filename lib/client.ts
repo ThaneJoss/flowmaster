@@ -17,13 +17,24 @@ export const isRequestCancelled = (error: unknown) => error instanceof Error && 
 
 const protocolVersion = "2025-11-25";
 interface ToolCall { name: string; arguments: Record<string, unknown> }
-type ToolPayload = Record<string, unknown> & { data: unknown };
+export interface ToolPayload<T = unknown> extends MutationResult<T> {
+    total?: number;
+    nextOffset?: number | null;
+    status?: number;
+}
+export interface CallOptions { signal?: AbortSignal | null }
+export type McpClient = <T>(name: string, args?: Record<string, unknown>, options?: CallOptions) => Promise<ToolPayload<T>>;
+export class McpError extends Error implements ApiError {
+    code?: string | number;
+    status?: number;
+    constructor(message: string) { super(message); this.name = "McpError"; }
+}
 const isRecord = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === "object" && !Array.isArray(value);
 const errorMessage = (value: unknown) => isRecord(value) && typeof value.message === "string" ? value.message : undefined;
 const isOffset = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 
 function requestError(message: string, status?: unknown, details?: unknown): ApiError {
-    const error: ApiError = new Error(message);
+    const error = new McpError(message);
     if (typeof status === "number" && Number.isInteger(status) && status >= 100 && status <= 599) error.status = status;
     if (isRecord(details) && (typeof details.code === "string" || typeof details.code === "number" && Number.isFinite(details.code))) error.code = details.code;
     return error;
@@ -94,7 +105,7 @@ function waitFor<T>(pending: Promise<T>, signal: AbortSignal): Promise<T> {
     });
 }
 
-export function makeClient(connection: Connection, sessionSignal?: AbortSignal): ApiClient {
+export function makeMcpClient(connection: Connection, sessionSignal?: AbortSignal): McpClient {
     const endpoint = endpointFor(connection.baseUrl);
     const token = connection.token;
     let nextId = 0;
@@ -158,11 +169,10 @@ export function makeClient(connection: Connection, sessionSignal?: AbortSignal):
         return initialization;
     }
 
-    async function request(path: string, options: RequestInit = {}, listOnly = false): Promise<{ payload: ToolPayload; call: ToolCall }> {
+    return async <T,>(name: string, args: Record<string, unknown> = {}, options: CallOptions = {}): Promise<ToolPayload<T>> => {
         const signal = requestSignal(options.signal);
         signal.throwIfAborted();
-        const call = toolFor(path, options);
-        if (listOnly && !/^(projects|hypotheses|experiments|resources)_list$/.test(call.name)) throw new Error("分页请求需要集合列表操作");
+        const call = { name, arguments: args };
         await waitFor(initialize(), signal);
         signal.throwIfAborted();
         const result = await rpc("tools/call", call, signal);
@@ -179,30 +189,40 @@ export function makeClient(connection: Connection, sessionSignal?: AbortSignal):
         const error = isRecord(payload) ? payload.error : undefined;
         if (result.isError || error) throw requestError(errorMessage(error) || text || "MCP 工具调用失败", isRecord(payload) ? payload.status : undefined, error);
         if (!isRecord(payload) || !("data" in payload)) throw new Error("服务返回了无效的 MCP 工具结果");
-        return { payload: payload as ToolPayload, call };
+        if (payload.affectedHypothesis !== undefined && !isRecord(payload.affectedHypothesis) || payload.deletedExperimentIds !== undefined && (!Array.isArray(payload.deletedExperimentIds) || payload.deletedExperimentIds.some(id => typeof id !== "string"))) {
+            throw new Error("服务返回了无效的 MCP 工具结果");
+        }
+        return payload as unknown as ToolPayload<T>;
+    };
+}
+
+export function parsePage<T>(payload: ToolPayload<T[]>, offset: unknown = 0): ApiPage<T> {
+    if (!isOffset(offset) || !Array.isArray(payload.data) || !isOffset(payload.total)) throw new Error("服务返回了无效的 MCP 分页结果");
+    let nextOffset = payload.nextOffset;
+    // Legacy servers may return short pages under their byte budget.
+    if (!Object.hasOwn(payload, "nextOffset")) nextOffset = offset + payload.data.length < payload.total ? offset + payload.data.length : null;
+    if (nextOffset !== null && (!isOffset(nextOffset) || nextOffset <= offset)) throw new Error("服务返回了无法继续的 MCP 分页结果");
+    return { data: payload.data, total: payload.total, nextOffset };
+}
+
+/** Compatibility adapter for existing integrations; new UI uses named operations. */
+export function makeClient(connection: Connection, sessionSignal?: AbortSignal): ApiClient {
+    const callTool = makeMcpClient(connection, sessionSignal);
+    async function request(path: string, options: RequestInit = {}, listOnly = false) {
+        options.signal?.throwIfAborted();
+        sessionSignal?.throwIfAborted();
+        const call = toolFor(path, options);
+        if (listOnly && !/^(projects|hypotheses|experiments|resources)_list$/.test(call.name)) throw new Error("分页请求需要集合列表操作");
+        return { payload: await callTool(call.name, call.arguments, options), call };
     }
 
     const client: ApiClient = async <T,>(path: string, options?: RequestInit) => (await request(path, options)).payload.data as T;
     client.page = async <T,>(path: string, options?: RequestInit): Promise<ApiPage<T>> => {
         const { payload, call } = await request(path, options, true);
-        const offset = call.arguments.offset ?? 0;
-        if (!isOffset(offset) || !Array.isArray(payload.data) || !isOffset(payload.total)) {
-            throw new Error("服务返回了无效的 MCP 分页结果");
-        }
-        let nextOffset = payload.nextOffset;
-        if (!Object.hasOwn(payload, "nextOffset")) {
-            // Older servers can return short pages due to their byte budget.
-            // Only total, not the requested limit, determines completion.
-            nextOffset = offset + payload.data.length < payload.total ? offset + payload.data.length : null;
-        }
-        if (nextOffset !== null && (!isOffset(nextOffset) || nextOffset <= offset)) throw new Error("服务返回了无法继续的 MCP 分页结果");
-        return { data: payload.data as T[], total: payload.total, nextOffset };
+        return parsePage(payload as ToolPayload<T[]>, call.arguments.offset ?? 0);
     };
     client.mutation = async <T,>(path: string, options?: RequestInit): Promise<MutationResult<T>> => {
         const { payload } = await request(path, options);
-        if (payload.affectedHypothesis !== undefined && !isRecord(payload.affectedHypothesis) || payload.deletedExperimentIds !== undefined && (!Array.isArray(payload.deletedExperimentIds) || payload.deletedExperimentIds.some(id => typeof id !== "string"))) {
-            throw new Error("服务返回了无效的 MCP 工具结果");
-        }
         return {
             data: payload.data as T,
             ...(payload.affectedHypothesis === undefined ? {} : { affectedHypothesis: payload.affectedHypothesis as unknown as MutationResult<T>["affectedHypothesis"] }),

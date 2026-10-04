@@ -20,13 +20,13 @@ test('node and hypothesis switches retain isolated, memory-only drafts without m
     try {
         s.nodeDraft.value!.title = 'Unsaved A'; s.upstream.value = ['b'];
         s.nodeId.value = 'b'; await nextTick();
-        s.nodeDraft.value!.summary = 'Unsaved B';
+        s.nodeDraft.value!.rationale = 'Unsaved B';
         s.hypothesisId.value = 'h2'; s.nodeId.value = 'a'; await nextTick();
         assert.equal(s.nodeDraft.value!.title, 'h2 A');
         s.nodeDraft.value!.title = 'Other hypothesis A';
         s.hypothesisId.value = 'h1'; s.nodeId.value = 'a'; await nextTick();
         assert.equal(s.nodeDraft.value!.title, 'Unsaved A'); assert.deepEqual(s.upstream.value, ['b']);
-        s.nodeId.value = 'b'; await nextTick(); assert.equal(s.nodeDraft.value!.summary, 'Unsaved B');
+        s.nodeId.value = 'b'; await nextTick(); assert.equal(s.nodeDraft.value!.rationale, 'Unsaved B');
         s.hypothesisId.value = 'h2'; s.nodeId.value = 'a'; await nextTick();
         assert.equal(s.nodeDraft.value!.title, 'Other hypothesis A');
         assert.equal(s.hypotheses.value[0].nodes[0].title, 'h1 A');
@@ -37,12 +37,12 @@ test('node and hypothesis switches retain isolated, memory-only drafts without m
 test('drag/layout refresh updates coordinates and clean fields without losing dirty inspector fields', async () => {
     const s = setup();
     try {
-        s.nodeDraft.value!.summary = 'Keep this';
+        s.nodeDraft.value!.rationale = 'Keep this';
         const updated = structuredClone(hypothesis('h1'));
         updated.nodes[0].x = 320; updated.nodes[0].y = 90; updated.nodes[0].title = 'Remote clean title';
         updated.edges = [{ source: 'b', target: 'a' }];
         s.hypotheses.value = [updated, hypothesis('h2')]; await nextTick();
-        assert.equal(s.nodeDraft.value!.summary, 'Keep this');
+        assert.equal(s.nodeDraft.value!.rationale, 'Keep this');
         assert.equal(s.nodeDraft.value!.x, 320); assert.equal(s.nodeDraft.value!.y, 90);
         assert.equal(s.nodeDraft.value!.title, 'Remote clean title');
         assert.deepEqual(s.upstream.value, ['b']); assert.equal(s.conflicted.value, false);
@@ -96,12 +96,12 @@ test('logout/workspace change clears drafts even when the next account reuses th
     const s = setup();
     try {
         s.nodeDraft.value!.title = 'Private draft';
-        s.nodeId.value = 'b'; await nextTick(); s.nodeDraft.value!.summary = 'Another private draft';
+        s.nodeId.value = 'b'; await nextTick(); s.nodeDraft.value!.rationale = 'Another private draft';
         s.clear(); s.hypotheses.value = []; await nextTick();
         assert.equal(s.nodeDraft.value, null); assert.equal(s.dirty.value, false);
         s.hypotheses.value = [hypothesis('h1')]; s.nodeId.value = 'a'; await nextTick();
         assert.equal(s.nodeDraft.value!.title, 'h1 A');
-        s.nodeId.value = 'b'; await nextTick(); assert.equal(s.nodeDraft.value!.summary, '');
+        s.nodeId.value = 'b'; await nextTick(); assert.equal(s.nodeDraft.value!.rationale, '');
     } finally { s.scope.stop(); }
 });
 
@@ -127,5 +127,30 @@ test('upstream changes survive navigation and require confirmation after a confl
         assert.deepEqual(s.upstream.value, ['c']);
         s.hypotheses.value = [{ ...updated, edges: [] }]; await nextTick();
         assert.deepEqual(s.upstream.value, ['c']); assert.equal(s.conflicted.value, true);
+    } finally { s.scope.stop(); }
+});
+
+
+test('resource drafts are isolated and newer selections survive result refresh and save acknowledgement', async () => {
+    const s = setup();
+    try {
+        s.nodeDraft.value!.resourceIds = ['r1'];
+        s.nodeDraft.value!.progress = 'in_progress';
+        assert.deepEqual(s.selected.value!.resourceIds || [], []);
+        const submitted = { ...s.nodeDraft.value!, resourceIds: [...s.nodeDraft.value!.resourceIds!] };
+        s.nodeDraft.value!.resourceIds!.push('r2');
+        s.acknowledge('h1', submitted, []);
+        const updated = hypothesis('h1');
+        updated.nodes[0] = { ...submitted, resourceIds: ['r1'], status: 'verified', summary: 'Measured result', currentResultId: 'e1' };
+        s.hypotheses.value = [updated]; await nextTick();
+        assert.deepEqual(s.nodeDraft.value!.resourceIds, ['r1', 'r2']);
+        assert.deepEqual(s.selected.value!.resourceIds, ['r1']);
+        assert.equal(s.nodeDraft.value!.progress, 'in_progress');
+        assert.equal(s.nodeDraft.value!.status, 'verified');
+        assert.equal(s.nodeDraft.value!.summary, 'Measured result');
+        assert.equal(s.conflicted.value, false);
+        assert.equal(s.dirty.value, true);
+        s.nodeDraft.value!.resourceIds = ['r1'];
+        assert.equal(s.dirty.value, false, 'current-result fields do not become editable drafts');
     } finally { s.scope.stop(); }
 });

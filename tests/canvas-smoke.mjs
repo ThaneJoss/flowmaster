@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { mkdirSync } from 'node:fs';
-import { schemas } from '../lib/server/validation.ts';
+import { nodeOperationSchemas, schemas } from '../lib/server/validation.ts';
 const require = createRequire(import.meta.url);
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE);
 const browser = await chromium.launch({ headless: true, executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE });
 const origin = 'http://127.0.0.1:4173';
-const node = (id, title, x = 40, y = 40) => ({ id, title, type: 'experiment', status: 'pending', x, y, inputs: '', output: '', summary: '', rationale: '', method: '', conclusion: '', nextAction: '', startedAt: '', duration: '' });
+const node = (id, title, x = 40, y = 40) => ({ id, title, type: 'experiment', status: 'pending', progress: 'pending', resourceIds: [], currentResultId: null, x, y, inputs: '', output: '', summary: '', rationale: '', method: '', conclusion: '', nextAction: '', startedAt: '', duration: '' });
 const hypothesis = (id, title) => ({ id, projectId: 'p1', title, description: 'Isolated canvas fixture', baseline: '', status: 'pending', revision: 1, nodes: [node('a', 'Node A'), node('b', 'Node B', 280, 40), node('c', 'Node C', 40, 210)], edges: [{ source: 'a', target: 'b' }] });
 const errors = [];
 let activePage;
@@ -16,7 +16,7 @@ try {
     const page = await context.newPage(); activePage = page;
     page.on('pageerror', error => errors.push(error.message));
     const data = { projects: [{ id: 'p1', name: 'Fixture project', description: '', revision: 1 }], hypotheses: [hypothesis('h1', 'Hypothesis one'), hypothesis('h2', 'Hypothesis two')], experiments: [], resources: [] };
-    if (!mobile) data.hypotheses.push(...Array.from({ length: 19 }, (_, index) => hypothesis(`h${index + 3}`, `Hypothesis ${index + 3}`)));
+    if (!mobile) data.hypotheses.push(...Array.from({ length: 199 }, (_, index) => hypothesis(`h${index + 3}`, `Hypothesis ${index + 3}`)));
     const writes = [];
     await page.route('**/mcp', async route => {
       const request = route.request(), rpc = request.postDataJSON();
@@ -31,6 +31,7 @@ try {
       if (rpc.method === 'notifications/initialized') return route.fulfill({ status: 202, body: '' });
       assert.equal(rpc.method, 'tools/call');
       const { name, arguments: args } = rpc.params;
+      if (name === 'tokens_list') return reply([]);
       const [kind, action] = name.split('_');
       if (data[kind] && action === 'list') {
         const records = data[kind].filter(item => {
@@ -44,14 +45,30 @@ try {
         return reply(items, 200, { total: records.length, nextOffset: next < records.length ? next : null });
       }
       if (data[kind] && action === 'get') return reply(data[kind].find(item => item.id === args.id));
-      if (name === 'hypotheses_update') {
-        const payload = args.data, index = data.hypotheses.findIndex(h => h.id === args.id);
-        assert.equal(payload.id, args.id);
-        writes.push(payload);
-        const parsed = schemas.hypotheses.safeParse(payload);
+      if (kind === 'nodes' && ['update', 'move', 'layout'].includes(action)) {
+        writes.push({ name, ...args });
+        const operation = nodeOperationSchemas[action].safeParse(args);
+        if (!operation.success) return reply(operation.error.issues.map(issue => issue.message).join('；'), 422);
+        const value = operation.data, index = data.hypotheses.findIndex(h => h.id === value.hypothesisId);
+        assert.ok(index !== -1);
+        const current = data.hypotheses[index];
+        if (value.revision !== current.revision) return reply('Fixture revision conflict', 409);
+        const next = structuredClone(current);
+        if (action === 'layout') {
+          const positions = new Map(value.positions.map(position => [position.id, position]));
+          if (positions.size !== value.positions.length || positions.size !== next.nodes.length || next.nodes.some(item => !positions.has(item.id))) return reply('布局必须恰好包含当前所有节点', 422);
+          next.nodes = next.nodes.map(item => ({ ...item, ...positions.get(item.id) }));
+        } else {
+          const target = next.nodes.find(item => item.id === value.nodeId); assert.ok(target);
+          if (action === 'move') Object.assign(target, { x: value.x, y: value.y });
+          else {
+            Object.assign(target, value.patch);
+            if (value.upstream !== undefined) next.edges = [...next.edges.filter(edge => edge.target !== value.nodeId), ...value.upstream.map(source => ({ source, target: value.nodeId }))];
+          }
+        }
+        const parsed = schemas.hypotheses.safeParse(next);
         if (!parsed.success) return reply(parsed.error.issues.map(issue => issue.message).join('；'), 422);
-        if (payload.revision !== data.hypotheses[index].revision) return reply('Fixture revision conflict', 409);
-        data.hypotheses[index] = { ...parsed.data, id: payload.id, revision: payload.revision + 1 };
+        data.hypotheses[index] = { ...parsed.data, id: current.id, revision: current.revision + 1 };
         return reply(data.hypotheses[index]);
       }
       throw new Error('Unexpected isolated canvas MCP tool: ' + name);
@@ -61,54 +78,59 @@ try {
       if (await drawer.isVisible()) await drawer.getByRole('button', { name: '关闭节点详情', exact: true }).click();
       await drawer.waitFor({ state: 'hidden' });
     };
-    const expandSection = async title => {
-      const section = drawer.locator('details.editor-section').filter({ has: page.locator('summary').filter({ hasText: title }) });
+    const dependencies = async () => {
+      const section = drawer.locator('details').filter({ has: page.locator('summary').filter({ hasText: '依赖步骤' }) });
       if (!await section.evaluate(element => element.open)) await section.locator('summary').click();
-    };
-    const openEditor = async () => {
-      await drawer.waitFor({ state: 'visible' });
-      const edit = drawer.getByRole('button', { name: '编辑节点', exact: true });
-      if (await edit.isVisible()) await edit.click();
-      await drawer.locator('.node-editor').waitFor();
-      for (const title of ['研究内容', '结果与时间', '上游节点']) await expandSection(title);
+      return section;
     };
     const choose = async id => {
       await closeDrawer();
       await page.locator(`.node[data-node-id="${id.toLowerCase()}"]`).click();
-      await openEditor();
+      await drawer.getByLabel('步骤标题', { exact: true }).waitFor();
     };
     const switchHypothesis = async title => {
       await closeDrawer();
       if (!await page.locator('#hypothesis-list').isVisible()) await page.locator('.sidebar-toggle').click();
-      await page.locator('.hypothesis-item').filter({ hasText: title }).click();
+      await page.locator('#hypothesis-list .hypothesis-item').filter({ hasText: title }).click();
       await page.locator('.flow-heading').getByRole('heading', { name: title, exact: true }).waitFor();
     };
     const waitIdle = async () => page.waitForFunction(() => document.querySelector('.canvas-add')?.disabled === false);
-    const save = async () => { await drawer.getByRole('button', { name: '保存节点', exact: true }).click(); await waitIdle(); };
+    const save = async () => { await drawer.getByRole('button', { name: '保存步骤', exact: true }).click(); await waitIdle(); };
+    const navigation = page.getByRole('navigation', { name: '主导航', exact: true });
     const login = async () => {
-      await page.locator('.app-header').getByRole('button', { name: '登录工作区', exact: true }).click();
-      await modal.getByLabel('访问 Token', { exact: true }).fill('canvas-fixture-only');
-      await modal.getByRole('button', { name: '保存', exact: true }).click();
+      await navigation.getByRole('link', { name: '连接与设置', exact: true }).click();
+      await page.locator('.connection-form').getByLabel('访问 Token', { exact: true }).fill('canvas-fixture-only');
+      await page.locator('.connection-form').getByRole('button', { name: '连接工作区', exact: true }).click();
+      await page.locator('.project-cards .card').filter({ hasText: 'Fixture project' }).getByRole('button', { name: '进入项目', exact: true }).click();
       await page.getByRole('heading', { name: 'Hypothesis one', exact: true }).waitFor();
     };
     await page.goto(origin); await login();
     if (!mobile) {
       const sidebar = page.locator('#hypothesis-list');
-      const lastHypothesis = sidebar.getByRole('button', { name: /Hypothesis 21/ });
+      const lastHypothesis = sidebar.getByRole('button', { name: /Hypothesis 201/ });
       assert.equal(await lastHypothesis.count(), 0);
-      await sidebar.locator('[aria-label="假设分页"]').getByRole('button', { name: '加载更多', exact: true }).click();
+      const pagination = sidebar.locator('[aria-label="流程分页"]');
+      const turnPage = async name => {
+        const first = await sidebar.locator('.hypothesis-item').first().textContent();
+        await pagination.getByRole('button', { name, exact: true }).click();
+        await page.waitForFunction(previous => document.querySelector('#hypothesis-list .hypothesis-item')?.textContent !== previous, first);
+      };
+      while (!await lastHypothesis.count()) await turnPage('下一页');
       await lastHypothesis.waitFor({ state: 'visible' });
-      await page.locator('.flow-heading').getByRole('heading', { name: 'Hypothesis one', exact: true }).waitFor();
+      await lastHypothesis.click();
+      await page.locator('.flow-heading').getByRole('heading', { name: 'Hypothesis 201', exact: true }).waitFor();
+      while (!await sidebar.getByRole('button', { name: /Hypothesis one/ }).count()) await turnPage('上一页');
+      await switchHypothesis('Hypothesis one');
     }
     await choose('A');
-    await drawer.getByLabel('结果摘要', { exact: true }).fill('Unsaved A');
+    await drawer.getByLabel('目标 / 说明', { exact: true }).fill('Unsaved A');
     if (!mobile) {
-      await choose('B'); await drawer.getByLabel('研究思路', { exact: true }).fill('Unsaved B');
+      await choose('B'); await drawer.getByLabel('目标 / 说明', { exact: true }).fill('Unsaved B');
       await switchHypothesis('Hypothesis two');
-      await choose('A'); assert.equal(await drawer.getByLabel('结果摘要', { exact: true }).inputValue(), '');
+      await choose('A'); assert.equal(await drawer.getByLabel('目标 / 说明', { exact: true }).inputValue(), '');
       await switchHypothesis('Hypothesis one');
-      await choose('A'); assert.equal(await drawer.getByLabel('结果摘要', { exact: true }).inputValue(), 'Unsaved A');
-      await choose('B'); assert.equal(await drawer.getByLabel('研究思路', { exact: true }).inputValue(), 'Unsaved B');
+      await choose('A'); assert.equal(await drawer.getByLabel('目标 / 说明', { exact: true }).inputValue(), 'Unsaved A');
+      await choose('B'); assert.equal(await drawer.getByLabel('目标 / 说明', { exact: true }).inputValue(), 'Unsaved B');
     }
     assert.equal(writes.length, 0, 'switching drafts must never save them');
     await choose('A');
@@ -130,13 +152,13 @@ try {
     }
     await waitIdle();
     assert.equal(data.hypotheses[0].nodes[0].x, 90); assert.equal(data.hypotheses[0].nodes[0].y, 75);
-    assert.equal(data.hypotheses[0].nodes[0].summary, '', 'drag only saves coordinates');
+    assert.equal(data.hypotheses[0].nodes[0].rationale, '', 'drag only saves coordinates');
     await choose('A');
-    assert.equal(await drawer.getByLabel('结果摘要', { exact: true }).inputValue(), 'Unsaved A');
+    assert.equal(await drawer.getByLabel('目标 / 说明', { exact: true }).inputValue(), 'Unsaved A');
     if (mobile) {
       assert.equal(await drawer.evaluate(element => element.matches(':modal')), true);
       await save();
-      assert.equal(data.hypotheses[0].nodes[0].summary, 'Unsaved A');
+      assert.equal(data.hypotheses[0].nodes[0].rationale, 'Unsaved A');
       await closeDrawer();
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
       await context.close();
@@ -146,59 +168,59 @@ try {
     await a.focus(); await a.press('ArrowRight'); await waitIdle();
     assert.equal(data.hypotheses[0].nodes[0].x, 100);
     await choose('A');
-    assert.equal(await drawer.getByLabel('结果摘要', { exact: true }).inputValue(), 'Unsaved A');
+    assert.equal(await drawer.getByLabel('目标 / 说明', { exact: true }).inputValue(), 'Unsaved A');
     await save();
     assert.equal(data.hypotheses[0].nodes[0].x, 100, 'saving inspector must not roll back a drag');
-    assert.equal(data.hypotheses[0].nodes[0].summary, 'Unsaved A');
-    assert.equal(await drawer.locator('.draft-note').count(), 0);
+    assert.equal(data.hypotheses[0].nodes[0].rationale, 'Unsaved A');
+    assert.equal(await drawer.locator('.unsaved').count(), 0);
 
     // Add a second parent, then try a genuine cycle through the real validator.
-    await choose('B'); await drawer.getByLabel(/^依赖关系/).selectOption(['a', 'c']); await save();
+    await choose('B'); await (await dependencies()).getByRole('checkbox', { name: 'Node C', exact: true }).check(); await save();
     assert.deepEqual(data.hypotheses[0].edges, [{ source: 'a', target: 'b' }, { source: 'c', target: 'b' }]);
     assert.equal(await page.locator('.canvas-connections > path').count(), 2);
-    await choose('C'); await drawer.getByLabel('节点标题', { exact: true }).fill('Rejected cycle draft');
-    await drawer.getByLabel(/^依赖关系/).selectOption(['b']); await save();
+    await choose('C'); await drawer.getByLabel('步骤标题', { exact: true }).fill('Rejected cycle draft');
+    await (await dependencies()).getByRole('checkbox', { name: 'Node B', exact: true }).check(); await save();
     await page.locator('#notice').filter({ hasText: '循环依赖' }).waitFor();
-    assert.equal(await drawer.getByLabel('节点标题', { exact: true }).inputValue(), 'Rejected cycle draft');
+    assert.equal(await drawer.getByLabel('步骤标题', { exact: true }).inputValue(), 'Rejected cycle draft');
     assert.equal(data.hypotheses[0].nodes[2].title, 'Node C');
     assert.equal(data.hypotheses[0].edges.length, 2);
-    await drawer.getByLabel(/^依赖关系/).selectOption([]); await save();
+    await (await dependencies()).getByRole('checkbox', { name: 'Node B', exact: true }).uncheck(); await save();
     assert.equal(data.hypotheses[0].nodes[2].title, 'Rejected cycle draft');
 
     // A stale revision is visible, and a refreshed same-field conflict needs confirmation.
-    await choose('A'); await drawer.getByLabel('节点标题', { exact: true }).fill('Local conflict title');
+    await choose('A'); await drawer.getByLabel('步骤标题', { exact: true }).fill('Local conflict title');
     data.hypotheses[0].nodes[0].title = 'Remote title'; data.hypotheses[0].revision++;
     await save(); await page.locator('#notice').filter({ hasText: 'Fixture revision conflict' }).waitFor();
-    assert.equal(await drawer.getByLabel('节点标题', { exact: true }).inputValue(), 'Local conflict title');
+    assert.equal(await drawer.getByLabel('步骤标题', { exact: true }).inputValue(), 'Local conflict title');
     await closeDrawer();
-    await page.getByRole('button', { name: '刷新', exact: true }).click(); await waitIdle();
+    await page.getByRole('button', { name: '刷新项目', exact: true }).click(); await waitIdle();
     await choose('A');
     await drawer.locator('.form-error').waitFor();
     const beforeConflictSave = writes.length;
-    await save(); await modal.getByRole('heading', { name: '确认覆盖冲突字段', exact: true }).waitFor();
+    await save(); await modal.getByRole('heading', { name: '确认保存冲突字段', exact: true }).waitFor();
     assert.equal(writes.length, beforeConflictSave);
     await modal.getByRole('button', { name: '取消', exact: true }).click();
-    assert.equal(await drawer.getByLabel('节点标题', { exact: true }).inputValue(), 'Local conflict title');
+    assert.equal(await drawer.getByLabel('步骤标题', { exact: true }).inputValue(), 'Local conflict title');
     await save(); await modal.getByRole('button', { name: '确认', exact: true }).click();
     await modal.waitFor({ state: 'hidden' }); await waitIdle();
     assert.equal(data.hypotheses[0].nodes[0].title, 'Local conflict title');
 
     // Layout also refreshes the workspace; it must leave other unsaved fields alone.
-    await drawer.getByLabel('结果摘要', { exact: true }).fill('Keep through layout');
+    await drawer.getByLabel('目标 / 说明', { exact: true }).fill('Keep through layout');
     await closeDrawer();
     await page.getByRole('button', { name: '自动布局', exact: true }).click(); await waitIdle();
     await choose('A');
-    assert.equal(await drawer.getByLabel('结果摘要', { exact: true }).inputValue(), 'Keep through layout');
-    assert.equal(data.hypotheses[0].nodes[0].summary, 'Unsaved A');
+    assert.equal(await drawer.getByLabel('目标 / 说明', { exact: true }).inputValue(), 'Keep through layout');
+    assert.equal(data.hypotheses[0].nodes[0].rationale, 'Unsaved A');
     await closeDrawer();
     await page.getByRole('button', { name: '适配', exact: true }).click();
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
-    await page.getByRole('button', { name: '退出', exact: true }).click();
-    await page.getByRole('heading', { name: '让每一步研究，都有迹可循', exact: true }).waitFor();
+    await navigation.getByRole('link', { name: '连接与设置', exact: true }).click();
+    await page.getByRole('button', { name: '退出并清除凭据', exact: true }).click();
     await login();
     await choose('A');
-    assert.equal(await drawer.getByLabel('结果摘要', { exact: true }).inputValue(), 'Unsaved A', 'logout clears unsaved drafts');
-    assert.equal(await drawer.locator('.draft-note').count(), 0);
+    assert.equal(await drawer.getByLabel('目标 / 说明', { exact: true }).inputValue(), 'Unsaved A', 'logout clears unsaved drafts');
+    assert.equal(await drawer.locator('.unsaved').count(), 0);
     await context.close();
   }
   assert.deepEqual(errors, []);
