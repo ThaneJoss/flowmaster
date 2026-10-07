@@ -30,7 +30,7 @@ const lines = computed(() => props.hypothesis.edges.map(edge => {
   if (!source || !target) return null;
   return { id: edge.source+"-"+edge.target, active: edge.source===props.selectedId||edge.target===props.selectedId, d: nodeConnectionPath(source, target, positions.value, width.value) };
 }).filter(Boolean));
-const statuses={pending:"待验证",running:"验证中",verified:"已验证",rejected:"已丢弃"};
+const progressLabels={pending:"待开始",in_progress:"进行中",completed:"已完成"};
 const types={baseline:"基线训练",observation:"结果观察",hypothesis:"研究假设",experiment:"实验验证",conclusion:"研究结论"};
 const typeIcons={baseline:"M3 17h18M6 13V8m6 5V3m6 10V6",observation:"M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12ZM12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6",hypothesis:"M9 18h6m-5 3h4M8 14a6 6 0 1 1 8 0c-1 1-1 2-1 2H9s0-1-1-2",experiment:"M9 3h6m-5 0v6l-5 9a2 2 0 0 0 2 3h10a2 2 0 0 0 2-3l-5-9V3M8 15h8",conclusion:"M5 3h14v18l-7-4-7 4V3Zm3 7 3 3 5-6"};
 function start(event,node) {
@@ -88,10 +88,10 @@ onBeforeUnmount(()=>{resizeObserver?.disconnect();end(true);});
     <div class="flow-toolbar">
       <div class="canvas-heading">
         <span class="canvas-heading-icon" aria-hidden="true"><svg class="flow-icon" viewBox="0 0 24 24"><path d="M3 3h7v7H3zM14 14h7v7h-7zM14 6h4v8M6 10v8h8"/></svg></span>
-        <div><h3>流程画布</h3><p>{{positions.length}} 个节点<span aria-hidden="true"> · </span>{{lines.length}} 条连接</p></div>
+        <div><h3>流程画布</h3><p>{{positions.length}} 个步骤<span aria-hidden="true"> · </span>{{lines.length}} 条连接</p></div>
       </div>
       <div class="canvas-actions" role="group" aria-label="流程编辑">
-        <UiButton class="canvas-add" variant="primary" @click="emit('add',{width:viewportWidth})" :busy="busy"><span aria-hidden="true">＋</span> 添加节点</UiButton>
+        <UiButton class="canvas-add" variant="primary" @click="emit('add',{width:viewportWidth})" :busy="busy"><span aria-hidden="true">＋</span> 添加步骤</UiButton>
         <UiButton class="canvas-layout" @click="arrange" :busy="busy"><svg class="flow-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3h6v6H3zM15 3h6v6h-6zM3 15h6v6H3zM15 15h6v6h-6zM9 6h6M18 9v6M15 18H9"/></svg>自动布局</UiButton>
       </div>
       <div class="canvas-view-actions">
@@ -103,13 +103,13 @@ onBeforeUnmount(()=>{resizeObserver?.disconnect();end(true);});
       </div>
     </div>
     <div ref="viewport" class="canvas">
-      <div v-if="!positions.length" class="canvas-empty"><span class="canvas-empty-icon" aria-hidden="true"><svg class="flow-icon" viewBox="0 0 24 24"><path d="M3 3h7v7H3zM14 14h7v7h-7zM14 6h4v8M6 10v8h8"/></svg></span><h3>从第一个节点开始</h3><p>把研究思路串成流程，让每一步都清晰可见。</p><UiButton variant="primary" :busy="busy" @click="emit('add',{width:viewportWidth})">＋ 添加节点</UiButton></div>
+      <div v-if="!positions.length" class="canvas-empty"><span class="canvas-empty-icon" aria-hidden="true"><svg class="flow-icon" viewBox="0 0 24 24"><path d="M3 3h7v7H3zM14 14h7v7h-7zM14 6h4v8M6 10v8h8"/></svg></span><h3>从第一个步骤开始</h3><p>把研究思路串成流程，让每一步都清晰可见。</p><UiButton variant="primary" :busy="busy" @click="emit('add',{width:viewportWidth})">＋ 添加步骤</UiButton></div>
       <div v-else class="canvas-scaled" :style="{width:Math.max(viewportWidth,width*zoom)+'px',height:height*zoom+'px'}"><div class="canvas-space" :style="{width:width+'px',height:height+'px',transform:'scale('+zoom+')'}">
         <svg class="canvas-connections" :width="width" :height="height" aria-hidden="true"><defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#9bacca"/></marker><marker id="arrow-active" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#5271e8"/></marker></defs><path v-for="line in lines" :key="line.id" :class="{'is-active':line.active}" :d="line.d" fill="none" stroke="#9bacca" stroke-width="2" stroke-linejoin="round" :marker-end="line.active?'url(#arrow-active)':'url(#arrow)'"/></svg>
         <button v-for="(node,index) in positions" :key="node.id" class="node" :class="['type-'+node.type,{selected:node.id===selectedId,dragging:drag?.id===node.id}]" :data-node-id="node.id" :style="{left:node.x+'px',top:node.y+'px'}" :title="node.title" :aria-pressed="node.id===selectedId" @pointerdown="start($event,node)" @pointermove="move" @pointerup="end()" @pointercancel="end(true)" @click="inspect($event,node)" @keydown="key($event,node)">
           <span class="node-heading"><span class="node-number">{{String(index+1).padStart(2,'0')}}</span><span class="node-type"><svg class="flow-icon" viewBox="0 0 24 24" aria-hidden="true"><path :d="typeIcons[node.type]"/></svg>{{types[node.type]}}</span><svg class="flow-icon node-grip" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5h.01M15 5h.01M9 12h.01M15 12h.01M9 19h.01M15 19h.01"/></svg></span>
           <strong class="node-title">{{node.title}}</strong>
-          <span class="node-footer"><span class="node-state" :class="node.status">{{statuses[node.status]}}</span><span class="node-detail" aria-hidden="true">{{node.id===selectedId?'已选中':'详情'}}<svg class="flow-icon" viewBox="0 0 24 24"><path d="m9 5 7 7-7 7"/></svg></span></span>
+          <span class="node-footer"><span class="node-state" :class="node.progress||'pending'">{{progressLabels[node.progress||'pending']}}</span><span class="node-detail" aria-hidden="true">{{node.id===selectedId?'已选中':'详情'}}<svg class="flow-icon" viewBox="0 0 24 24"><path d="m9 5 7 7-7 7"/></svg></span></span>
         </button>
       </div></div>
     </div>
@@ -164,9 +164,8 @@ onBeforeUnmount(()=>{resizeObserver?.disconnect();end(true);});
 .node-footer{display:flex;align-items:center;justify-content:space-between;gap:6px;min-width:0}
 .node-state{display:inline-flex;align-items:center;gap:5px;padding:2px 6px;border-radius:5px;background:#f1f4f8;color:#718098;font-size:10px;font-weight:600;line-height:17px;white-space:nowrap}
 .node-state::before{content:"";width:5px;height:5px;border-radius:50%;background:currentColor;flex:none}
-.node-state.running{background:#edf2ff;color:#536fd1}
-.node-state.verified{background:#eaf6ee;color:#28825d}
-.node-state.rejected{background:#fceef0;color:#b55a6a}
+.node-state.in_progress{background:#edf2ff;color:#536fd1}
+.node-state.completed{background:#eaf6ee;color:#28825d}
 .node-detail{display:flex;align-items:center;gap:2px;color:#97a4b8;font-size:10px;white-space:nowrap}
 .node-detail .flow-icon{width:11px;height:11px}
 .node.selected .node-detail{color:var(--node-ink);font-weight:650}

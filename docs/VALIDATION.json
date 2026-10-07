@@ -1,9 +1,9 @@
 {
   "architecture": "Vue 3 + Vite static frontend + standalone Worker MCP server + D1",
   "status": "local-checks-passed",
-  "validatedOn": "2026-10-05",
+  "validatedOn": "2026-10-04",
   "localExecution": true,
-  "change": "Paginated workspace browsing, byte-bounded collection lists, authoritative mutation updates with separate refresh errors, complete paginated exports, and obsolete/duplicate test cleanup",
+  "change": "Reviewed integration of project workspace, typed MCP client, workflow records and architecture documentation; preserved bounded pagination, immediate write acknowledgement, complete exports and cleaned test coverage",
   "checksRun": [
     {
       "command": "pnpm check",
@@ -12,11 +12,7 @@
     {
       "command": "pnpm test",
       "status": "passed",
-      "tests": 37
-    },
-    {
-      "command": "node --experimental-strip-types --test tests/client.test.ts tests/workspace-export.test.ts",
-      "status": "passed-separately-after-final-helper-and-client-changes"
+      "tests": 42
     },
     {
       "command": "pnpm build",
@@ -34,12 +30,12 @@
     {
       "command": "node tests/browser-smoke.mjs",
       "status": "passed",
-      "scope": "Mocked MCP: login retry/cancellation, pagination, save-success/refresh-failure, token issuance, logout"
+      "scope": "Mocked MCP: 31-project pagination, login retry/cancellation and history navigation, resource selection, independent progress/result, short-page history cursors, successful save with failed refresh, token issuance and logout"
     },
     {
       "command": "node tests/canvas-smoke.mjs",
       "status": "passed",
-      "scope": "Mocked MCP: desktop/touch dragging, keyboard movement, drafts, layout, DAG validation, revision conflicts"
+      "scope": "Mocked MCP: 201-flow pagination, desktop/touch dragging, keyboard movement, drafts, layout, DAG validation and revision conflicts"
     },
     {
       "command": "node scripts/check-deployment.mjs",
@@ -48,21 +44,18 @@
     {
       "command": "git diff --check",
       "status": "passed"
-    },
-    {
-      "check": "Focused independent browser review",
-      "status": "passed",
-      "scope": "25 hypotheses: off-page graph and draft survive refresh, linked resource refresh, remote 404 removal and draft eviction"
     }
   ],
   "regressionsVerified": [
     "5001 records: snapshot rejects, collection pagination returns all records without gaps or duplicates",
     "600000-byte UTF-8 records and enriched experiment titles remain within the 1000000-byte structured page budget",
-    "Short pages follow nextOffset, including full and filtered JSON exports",
-    "Confirmed writes close forms and are not retried when a later refresh fails",
-    "Logout and account switches discard stale requests",
-    "Real pointer can reach hypothesis pagination controls with more than 20 entries",
-    "Off-page graph and unsaved drafts survive refresh; confirmed remote deletion removes stale drafts"
+    "Short pages follow nextOffset, including visible lists, previous-page navigation and full/filtered JSON exports",
+    "Confirmed writes and seed acknowledge without waiting for background list refresh; failed refresh never repeats the write",
+    "Session cancellation discards old account requests; entity reads and late 404 responses cannot erase newer confirmed cache state",
+    "Visible pages stay bounded while cached and directly loaded entities retain off-page references",
+    "Resource draft arrays remain isolated, preserve subsequent changes and detect conflicting remote edits",
+    "Real MCP/D1 result correction, selection and deletion preserve execution progress, evidence and recording time",
+    "Only browser failure screenshots are retained; obsolete REST tests and duplicate mobile scenarios remain removed"
   ],
   "notYetVerified": [
     "Cloudflare preview or production deployment, remote bindings, secrets and migrations",

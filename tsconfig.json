@@ -19,6 +19,7 @@
   },
   "include": [
     "worker/**/*.ts",
+    "web/src/**/*.ts",
     "lib/**/*.ts",
     "tests/**/*.ts"
   ],
