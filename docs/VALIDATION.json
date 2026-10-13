@@ -1,13 +1,29 @@
 {
   "architecture": "Vue 3 + Vite static frontend + standalone Worker MCP server + D1",
   "status": "local-checks-passed",
-  "validatedOn": "2026-10-04",
+  "validatedOn": "2026-10-13",
   "localExecution": true,
-  "change": "Reviewed integration of project workspace, typed MCP client, workflow records and architecture documentation; preserved bounded pagination, immediate write acknowledgement, complete exports and cleaned test coverage",
+  "change": "Align shared theme and canvas actions with webapps main 994a749; add semantic lint, all-SFC gradual type checks, selected-screen axe and dependency audit to existing PR CI; patch dependency advisories",
   "checksRun": [
     {
+      "command": "pnpm install --frozen-lockfile",
+      "status": "passed",
+      "scope": "pnpm 11.25.0; original release-age and build policies retained"
+    },
+    {
+      "command": "pnpm audit --json",
+      "status": "passed",
+      "scope": "0 advisories (previously 29: 11 high, 12 moderate, 6 low); CI blocks high/critical"
+    },
+    {
+      "command": "pnpm lint",
+      "status": "passed",
+      "scope": "Vue essential and JS/TS recommended semantic rules; no formatting enforcement"
+    },
+    {
       "command": "pnpm check",
-      "status": "passed"
+      "status": "passed",
+      "scope": "Unchanged strict TypeScript check followed by gradual checkJs/strictTemplates vue-tsc check; all 16 SFCs present in compiler program"
     },
     {
       "command": "pnpm test",
@@ -30,12 +46,12 @@
     {
       "command": "node tests/browser-smoke.mjs",
       "status": "passed",
-      "scope": "Mocked MCP: 31-project pagination, login retry/cancellation and history navigation, resource selection, independent progress/result, short-page history cursors, successful save with failed refresh, token issuance and logout"
+      "scope": "Mocked MCP: 31-project pagination, login retry/cancellation and history navigation, resource selection, independent progress/result, short-page history cursors, successful save with failed refresh, token issuance and logout; axe scans of disconnected projects, mobile connection, populated projects and project dialog; 320px touch layout and reduced motion"
     },
     {
       "command": "node tests/canvas-smoke.mjs",
       "status": "passed",
-      "scope": "Mocked MCP: 201-flow pagination, desktop/touch dragging, keyboard movement, drafts, layout, DAG validation and revision conflicts"
+      "scope": "Mocked MCP: 201-flow pagination, desktop/touch dragging, keyboard movement, drafts, layout, DAG validation and revision conflicts; axe scans of desktop/mobile canvas and step drawer, 320px layout and 44px touch controls"
     },
     {
       "command": "node scripts/check-deployment.mjs",
@@ -55,12 +71,23 @@
     "Visible pages stay bounded while cached and directly loaded entities retain off-page references",
     "Resource draft arrays remain isolated, preserve subsequent changes and detect conflicting remote edits",
     "Real MCP/D1 result correction, selection and deletion preserve execution progress, evidence and recording time",
-    "Only browser failure screenshots are retained; obsolete REST tests and duplicate mobile scenarios remain removed"
+    "Only browser failure screenshots are retained; obsolete REST tests and duplicate mobile scenarios remain removed",
+    "WCAG-tagged axe smoke checks catch low-contrast canvas text; touch layout assertions catch undersized controls and overlapping flow titles",
+    "Shared base/ink/border colors and canvas primary action match webapps while preserving node type colors and dense desktop controls",
+    "Temporary negative Vue probes correctly reject unknown template names, incorrect boolean props, native event payloads, and malformed record/resource fields; probes removed afterward"
   ],
   "notYetVerified": [
     "Cloudflare preview or production deployment, remote bindings, secrets and migrations",
     "Production load and deep-offset performance",
-    "Consistent snapshot export during concurrent remote mutations"
+    "Consistent snapshot export during concurrent remote mutations",
+    "Manual screen-reader acceptance; axe incomplete results require human review",
+    "Fully strict JavaScript: Vue check allows implicit any, nullable values, catch values and custom attrs/events forwarding; dynamic modal and array-style emits remain partially inferred",
+    "Accessible Cloudflare branch preview: URL routing disabled, no deployed DB/ADMIN_TOKEN bindings at read-only inspection; production untouched",
+    "External code review: no review submitted on draft PR at inspection time"
   ],
-  "notes": "Used Node 24.19.0 and pinned pnpm 11.25.0. Browser checks used Playwright 1.61.1 with system Chromium. No remote deployment or production data changes."
+  "notes": "Node 24.19.0 and pnpm 11.25.0. Browser checks use Playwright 1.61.1, axe-core 4.12.1 and system Chromium. Local MCP tests use a writable XDG_CONFIG_HOME in /tmp. Dependency installation policies, credentials, domains and production settings are unchanged. No manual deployment or remote database writes; the existing Cloudflare integration automatically builds PR branch previews on push. Final exact-commit GitHub CI and platform evidence is recorded in PR #18. Internal static review is separate from external PR review.",
+  "baseline": {
+    "flowmaster": "985aa3c0901a202f5e18ab7d9cb5f72b719a5c2f",
+    "webapps": "994a749aecb7f9143d1d180ce86e3ba5e6632149"
+  }
 }

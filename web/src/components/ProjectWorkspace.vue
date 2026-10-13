@@ -4,7 +4,12 @@ import UiButton from "./UiButton.vue";
 import FlowCanvas from "./FlowCanvas.vue";
 import NodeDrawer from "./NodeDrawer.vue";
 import PageControls from "./PageControls.vue";
-const props = defineProps({ project: Object, hypotheses: Array, current: Object, selectedId: String, busy: Boolean, loading: Boolean, query: { type: String, default: "" }, total: Number, offset: Number, nextOffset: { type: Number, default: null }, error: String });
+const props = defineProps({
+  project: /** @type {import('vue').PropType<import('../../../lib/types.ts').Project>} */ (Object),
+  hypotheses: /** @type {import('vue').PropType<import('../../../lib/types.ts').Hypothesis[]>} */ (Array),
+  current: /** @type {import('vue').PropType<import('../../../lib/types.ts').Hypothesis>} */ (Object),
+  selectedId: String, busy: Boolean, loading: Boolean, query: { type: String, default: "" }, total: Number, offset: Number, nextOffset: { type: Number, default: null }, error: String,
+});
 const emit = defineEmits(["create-flow", "edit-flow", "remove-flow", "select-flow", "select-node", "add-node", "move-node", "layout", "filter", "page", "focus"]);
 const search = ref(props.query), focused = ref(false), sidebarOpen = ref(true), inspectorOpen = ref(!!props.selectedId), descriptionOpen = ref(false);
 let canvasSelection = "", sidebarBeforeFocus = true;
@@ -19,7 +24,7 @@ function toggleFocus(value) {
   else sidebarOpen.value = sidebarBeforeFocus;
   emit("focus", value);
 }
-function selectedNodeElement() { return [...document.querySelectorAll(".node[data-node-id]")].find(element => element.dataset.nodeId === props.selectedId); }
+function selectedNodeElement() { return [...document.querySelectorAll(".node[data-node-id]")].find(element => element instanceof HTMLElement && element.dataset.nodeId === props.selectedId); }
 function escape(event) {
   if (event.key === "Escape" && focused.value && !event.defaultPrevented && !event.isComposing && !document.querySelector("dialog[open]")) { event.preventDefault(); toggleFocus(false); }
 }

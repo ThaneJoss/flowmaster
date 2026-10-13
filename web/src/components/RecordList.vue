@@ -1,7 +1,11 @@
 <script setup>
 import UiButton from "./UiButton.vue";
 import PageControls from "./PageControls.vue";
-defineProps({ records: Array, total: Number, offset: Number, limit: Number, nextOffset: { type: Number, default: null }, loading: Boolean, hypotheses: Array, currentResultId: String, nodeMode: Boolean, pendingId: String });
+defineProps({
+  records: /** @type {import('vue').PropType<import('../../../lib/types.ts').Experiment[]>} */ (Array),
+  hypotheses: /** @type {import('vue').PropType<import('../../../lib/types.ts').Hypothesis[]>} */ (Array),
+  total: Number, offset: Number, limit: Number, nextOffset: { type: Number, default: null }, loading: Boolean, currentResultId: String, nodeMode: Boolean, pendingId: String,
+});
 const emit = defineEmits(["page", "show", "edit", "remove", "jump", "select-result"]);
 const statuses = { pending: "待判定", running: "判定中", verified: "已验证", rejected: "未通过" };
 const date = input => input ? new Date(input).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai" }) : "未记录";

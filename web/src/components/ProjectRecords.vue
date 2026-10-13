@@ -3,7 +3,14 @@ import { computed, ref, watch } from "vue";
 import UiButton from "./UiButton.vue";
 import RecordList from "./RecordList.vue";
 import PageControls from "./PageControls.vue";
-const props = defineProps({ project: Object, hypotheses: Array, visibleHypotheses: Array, hypothesisQuery: String, hypothesisTotal: Number, hypothesisOffset: Number, hypothesisNextOffset: { type: Number, default: null }, hypothesisLoading: Boolean, hypothesisError: String, records: Array, total: Number, offset: Number, limit: Number, nextOffset: { type: Number, default: null }, loading: Boolean, error: String, exporting: Boolean, pendingId: String, filters: Object });
+const props = defineProps({
+  project: /** @type {import('vue').PropType<import('../../../lib/types.ts').Project>} */ (Object),
+  hypotheses: /** @type {import('vue').PropType<import('../../../lib/types.ts').Hypothesis[]>} */ (Array),
+  visibleHypotheses: /** @type {import('vue').PropType<import('../../../lib/types.ts').Hypothesis[]>} */ (Array),
+  records: /** @type {import('vue').PropType<import('../../../lib/types.ts').Experiment[]>} */ (Array),
+  filters: /** @type {import('vue').PropType<{ q?: string, status?: import('../../../lib/types.ts').Status | '', hypothesisId?: string }>} */ (Object),
+  hypothesisQuery: String, hypothesisTotal: Number, hypothesisOffset: Number, hypothesisNextOffset: { type: Number, default: null }, hypothesisLoading: Boolean, hypothesisError: String, total: Number, offset: Number, limit: Number, nextOffset: { type: Number, default: null }, loading: Boolean, error: String, exporting: Boolean, pendingId: String,
+});
 const emit = defineEmits(["filter", "page", "create", "show", "edit", "remove", "jump", "export", "hypothesis-filter", "hypothesis-page"]);
 const query = ref(props.filters.q || "");
 const status = ref(props.filters.status || "");
