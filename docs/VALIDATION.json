@@ -1,10 +1,15 @@
 {
   "architecture": "Vue 3 + Vite static frontend + standalone Worker MCP server + D1",
   "status": "local-checks-passed",
-  "validatedOn": "2026-10-04",
+  "validatedOn": "2026-10-13",
   "localExecution": true,
-  "change": "Reviewed integration of project workspace, typed MCP client, workflow records and architecture documentation; preserved bounded pagination, immediate write acknowledgement, complete exports and cleaned test coverage",
+  "change": "Align shared theme and canvas actions with webapps main 994a749; improve text contrast and touch targets; add semantic lint and selected-screen axe checks to existing PR CI",
   "checksRun": [
+    {
+      "command": "pnpm lint",
+      "status": "passed",
+      "scope": "Vue essential and JS/TS recommended semantic rules; no formatting enforcement"
+    },
     {
       "command": "pnpm check",
       "status": "passed"
@@ -30,12 +35,12 @@
     {
       "command": "node tests/browser-smoke.mjs",
       "status": "passed",
-      "scope": "Mocked MCP: 31-project pagination, login retry/cancellation and history navigation, resource selection, independent progress/result, short-page history cursors, successful save with failed refresh, token issuance and logout"
+      "scope": "Mocked MCP: 31-project pagination, login retry/cancellation and history navigation, resource selection, independent progress/result, short-page history cursors, successful save with failed refresh, token issuance and logout; axe scans of disconnected projects, mobile connection, populated projects and project dialog; 320px touch layout and reduced motion"
     },
     {
       "command": "node tests/canvas-smoke.mjs",
       "status": "passed",
-      "scope": "Mocked MCP: 201-flow pagination, desktop/touch dragging, keyboard movement, drafts, layout, DAG validation and revision conflicts"
+      "scope": "Mocked MCP: 201-flow pagination, desktop/touch dragging, keyboard movement, drafts, layout, DAG validation and revision conflicts; axe scans of desktop/mobile canvas and step drawer, 320px layout and 44px touch controls"
     },
     {
       "command": "node scripts/check-deployment.mjs",
@@ -55,12 +60,19 @@
     "Visible pages stay bounded while cached and directly loaded entities retain off-page references",
     "Resource draft arrays remain isolated, preserve subsequent changes and detect conflicting remote edits",
     "Real MCP/D1 result correction, selection and deletion preserve execution progress, evidence and recording time",
-    "Only browser failure screenshots are retained; obsolete REST tests and duplicate mobile scenarios remain removed"
+    "Only browser failure screenshots are retained; obsolete REST tests and duplicate mobile scenarios remain removed",
+    "WCAG-tagged axe smoke checks catch low-contrast canvas text; touch layout assertions catch undersized controls and overlapping flow titles",
+    "Shared base/ink/border colors and canvas primary action match webapps while preserving node type colors and dense desktop controls"
   ],
   "notYetVerified": [
     "Cloudflare preview or production deployment, remote bindings, secrets and migrations",
     "Production load and deep-offset performance",
-    "Consistent snapshot export during concurrent remote mutations"
+    "Consistent snapshot export during concurrent remote mutations",
+    "Manual screen-reader acceptance and full Vue template type checking; axe incomplete results require human review"
   ],
-  "notes": "Used Node 24.19.0 and pinned pnpm 11.25.0. Browser checks used Playwright 1.61.1 with system Chromium. No remote deployment or production data changes."
+  "notes": "Used Node 24.19.0 and pinned pnpm 11.25.0. Browser checks used Playwright 1.61.1, axe-core 4.12.1 and system Chromium; desktop/320px screenshots reviewed locally. Initial local MCP test setup required a writable XDG_CONFIG_HOME in /tmp because the cloud home is read-only; all 42 tests passed with that environment. Existing dependency installation policies, credentials and production settings are unchanged. No remote deployment, dataset downloads or production data changes. Final PR CI evidence is recorded in the PR.",
+  "baseline": {
+    "flowmaster": "985aa3c0901a202f5e18ab7d9cb5f72b719a5c2f",
+    "webapps": "994a749aecb7f9143d1d180ce86e3ba5e6632149"
+  }
 }

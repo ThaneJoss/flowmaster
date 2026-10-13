@@ -82,6 +82,7 @@ pnpm dev
 
 | 命令 | 用途 |
 | --- | --- |
+| `pnpm lint` | Vue 模板、JavaScript、TypeScript 与测试/构建脚本的静态检查 |
 | `pnpm check` | TypeScript 类型检查 |
 | `pnpm build` | 构建前端并校验静态产物 |
 | `pnpm test` | 单元与集成测试 |
@@ -92,6 +93,29 @@ pnpm dev
 | `pnpm run builds:logs --account <ID> --build <UUID>` | 只读获取 Cloudflare 构建状态与分页日志；需用户级 Token 的 Workers CI Read 权限 |
 | `pnpm run deploy:preview` | 构建并运行 Wrangler preview |
 | `pnpm run deploy` | 构建并发布生产 |
+
+### PR 检查
+
+[GitHub Actions](.github/workflows/ci.yml) 在每个 PR 和 `main` push 上执行 `pnpm lint`、`pnpm check`、`pnpm test`、前端构建与产物验证、Worker dry-run 打包、本地 Worker / D1 集成检查和本地部署配置检查。浏览器使用构建产物与模拟 MCP，验证分页、会话取消、记录、画布、桌面/触控操作，并运行 axe WCAG A/AA 扫描、320px 布局与减少动态效果检查；失败时保留截图。
+
+`pnpm check` 检查 `.ts` 文件，Vue 单文件组件中的 JavaScript 与模板由 ESLint 检查，交互由浏览器测试覆盖；这不等价于完整的 Vue 模板类型检查。自动无障碍扫描也不能代替人工屏幕阅读器验收。CI 不连接线上工作区或执行部署、远端迁移。
+
+如需本地运行与 CI 相同的浏览器检查，在 `pnpm build` 后执行（预览服务需保持运行）：
+
+```sh
+npm install --prefix /tmp/flowmaster-browser --no-package-lock --ignore-scripts playwright@1.61.1 axe-core@4.12.1
+node /tmp/flowmaster-browser/node_modules/playwright/cli.js install chromium
+pnpm exec vite preview --host 127.0.0.1 --port 4173 --strictPort
+```
+
+另开终端执行：
+
+```sh
+export PLAYWRIGHT_MODULE=/tmp/flowmaster-browser/node_modules/playwright
+export AXE_MODULE=/tmp/flowmaster-browser/node_modules/axe-core
+node tests/browser-smoke.mjs
+node tests/canvas-smoke.mjs
+```
 
 ## 部署
 

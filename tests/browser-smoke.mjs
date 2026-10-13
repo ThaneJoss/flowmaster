@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { mkdirSync } from "node:fs";
 import { nodeOperationSchemas, schemas } from "../lib/server/validation.ts";
+import { checkAccessibility, checkTouchLayout } from "./accessibility.mjs";
 const require=createRequire(import.meta.url);
 const { chromium }=require(process.env.PLAYWRIGHT_MODULE);
 const origin="http://127.0.0.1:4173";
@@ -109,6 +110,17 @@ try{
   await page.getByRole("heading",{name:"项目",exact:true}).waitFor();
   await page.getByRole("heading",{name:"连接你的工作区",exact:true}).waitFor();
 
+  // Shared shell: keyboard focus, reduced motion, and a narrow touch layout.
+  await checkAccessibility(page,"disconnected projects");
+  await page.setViewportSize({width:320,height:800});
+  await page.emulateMedia({reducedMotion:"reduce"});
+  await settings();
+  await checkAccessibility(page,"mobile connection form");
+  await checkTouchLayout(page,"mobile connection form");
+  assert.equal(await page.getByRole("button",{name:"连接工作区",exact:true}).evaluate(element=>getComputedStyle(element).transitionDuration),"0s");
+  await page.emulateMedia({reducedMotion:"no-preference"});
+  await page.setViewportSize({width:1440,height:1000});
+
   // Failed authentication keeps the inline form and input, and allows a retry.
   await settings();
   await connectionForm.getByLabel("访问 Token",{exact:true}).fill("fixture-invalid-token");
@@ -146,6 +158,7 @@ try{
   }
 
   await login("fixture-admin-token");
+  await checkAccessibility(page,"project list");
   assert.equal(await page.evaluate(()=>localStorage.getItem("flowmaster.connection")),null);
   const projectPages=page.locator('[aria-label="项目分页"]');
   assert.equal(await page.getByRole("heading",{name:"Extra project 30",exact:true}).count(),0);
@@ -200,6 +213,7 @@ try{
   await projects();
   await page.getByRole("button",{name:"新建项目",exact:true}).click();
   await page.getByRole("dialog").getByLabel("项目名称",{exact:true}).fill("Created project");
+  await checkAccessibility(page,"project dialog");
   await page.getByRole("dialog").getByRole("button",{name:"保存",exact:true}).click();
   await page.getByRole("heading",{name:"Created project",exact:true}).waitFor();
   await openProject();
