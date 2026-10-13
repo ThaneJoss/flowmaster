@@ -4,7 +4,28 @@ import UiField from "./UiField.vue";
 import UiButton from "./UiButton.vue";
 import ResourcePicker from "./ResourcePicker.vue";
 import RecordList from "./RecordList.vue";
-const props = defineProps({ draft: Object, node: Object, hypothesis: Object, upstream: Array, dirty: Boolean, conflicted: Boolean, resources: Array, visibleResources: Array, resourceQuery: String, resourceTotal: Number, resourceOffset: Number, resourceNextOffset: { type: Number, default: null }, resourceLoading: Boolean, resourceError: String, history: Array, historyTotal: Number, historyOffset: Number, historyLimit: Number, historyNextOffset: { type: Number, default: null }, historyLoading: Boolean, historyError: String, saving: Boolean, currentResult: Object, resultLoading: Boolean, pendingRecordId: String });
+const props = defineProps({
+  /** @type {import("vue").PropType<import("../../../lib/types").FlowNode>} */
+  draft: Object,
+  /** @type {import("vue").PropType<import("../../../lib/types").FlowNode>} */
+  node: Object,
+  /** @type {import("vue").PropType<import("../../../lib/types").Hypothesis>} */
+  hypothesis: Object,
+  /** @type {import("vue").PropType<string[]>} */
+  upstream: Array,
+  dirty: Boolean, conflicted: Boolean,
+  /** @type {import("vue").PropType<import("../../../lib/types").Resource[]>} */
+  resources: Array,
+  /** @type {import("vue").PropType<import("../../../lib/types").Resource[]>} */
+  visibleResources: Array,
+  resourceQuery: String, resourceTotal: Number, resourceOffset: Number, resourceNextOffset: { type: Number, default: null }, resourceLoading: Boolean, resourceError: String,
+  /** @type {import("vue").PropType<import("../../../lib/types").Experiment[]>} */
+  history: Array,
+  historyTotal: Number, historyOffset: Number, historyLimit: Number, historyNextOffset: { type: Number, default: null }, historyLoading: Boolean, historyError: String, saving: Boolean,
+  /** @type {import("vue").PropType<import("../../../lib/types").Experiment>} */
+  currentResult: Object,
+  resultLoading: Boolean, pendingRecordId: String
+});
 const emit = defineEmits(["update:upstream", "save", "remove", "new-record", "edit-record", "remove-record", "show-record", "history-page", "select-result", "resources", "reload-result", "resource-filter", "resource-page"]);
 const types = { baseline: "基线", observation: "观察", hypothesis: "假设", experiment: "实验", conclusion: "结论" };
 const statuses = { pending: "待判定", running: "判定中", verified: "已验证", rejected: "未通过" };
@@ -17,7 +38,11 @@ const advanced = computed(() => {
   fields.push(["nextAction", "后续行动"]);
   return fields;
 });
-function toggleParent(id, checked) { emit("update:upstream", checked ? [...new Set([...props.upstream, id])] : props.upstream.filter(value => value !== id)); }
+/** @param {string} id @param {Event} event */
+function toggleParent(id, event) {
+  if (!(event.target instanceof HTMLInputElement)) return;
+  emit("update:upstream", event.target.checked ? [...new Set([...props.upstream, id])] : props.upstream.filter(value => value !== id));
+}
 const date = value => value ? new Date(value).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai" }) : "未记录";
 </script>
 <template>
@@ -30,7 +55,7 @@ const date = value => value ? new Date(value).toLocaleString("zh-CN", { timeZone
       <UiField label="目标 / 说明"><textarea v-model="draft.rationale" maxlength="16000" placeholder="这一步希望完成什么？"/></UiField>
       <div class="form-grid"><UiField label="步骤类型"><select v-model="draft.type" aria-label="步骤类型"><option v-for="(label,key) in types" :key="key" :value="key">{{label}}</option></select></UiField><UiField label="执行进度"><select v-model="draft.progress" aria-label="执行进度"><option :value="undefined" disabled>未设置</option><option v-for="(label,key) in progress" :key="key" :value="key">{{label}}</option></select></UiField></div>
       <UiField label="开始时间（可选）" hint="保留实际开始时间；新增或修正执行记录不会改写它。"><input v-model="draft.startedAt" maxlength="100" placeholder="例如 2026-10-02 09:30"></UiField>
-      <details v-if="parents.length" class="form-section"><summary>依赖步骤 <small>{{upstream.length}} 项</small></summary><div class="choice-list"><label v-for="parent in parents" :key="parent.id" class="check"><input type="checkbox" :checked="upstream.includes(parent.id)" @change="toggleParent(parent.id,$event.target.checked)">{{parent.title}}</label></div></details>
+      <details v-if="parents.length" class="form-section"><summary>依赖步骤 <small>{{upstream.length}} 项</small></summary><div class="choice-list"><label v-for="parent in parents" :key="parent.id" class="check"><input type="checkbox" :checked="upstream.includes(parent.id)" @change="toggleParent(parent.id,$event)">{{parent.title}}</label></div></details>
       <details class="form-section"><summary>研究细节（可选）</summary><UiField v-for="[key,label] in advanced" :key="key" :label="label"><textarea v-model="draft[key]" maxlength="16000"/></UiField></details>
       <details class="form-section"><summary>关联资料 <small>{{draft.resourceIds?.length||0}} 项</small></summary><ResourcePicker v-model="draft.resourceIds" :resources="resources" :visible-resources="visibleResources" :query="resourceQuery" :total="resourceTotal" :offset="resourceOffset" :next-offset="resourceNextOffset" :loading="resourceLoading" :error="resourceError" @filter="emit('resource-filter',$event)" @page="emit('resource-page',$event)"/><UiButton @click="emit('resources')">管理项目资料</UiButton></details>
       <div class="actions"><UiButton type="submit" variant="primary" :busy="saving">保存步骤</UiButton></div>

@@ -3,7 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
 import UiButton from "./UiButton.vue";
 import { CANVAS_PADDING, NODE_HEIGHT, NODE_WIDTH, nodeConnectionPath } from "../../../lib/canvas-layout.ts";
 import { MAX_NODE_COORDINATE } from "../../../lib/types.ts";
-const props = defineProps({ hypothesis: Object, selectedId: String, busy: Boolean, focused: Boolean });
+const props = defineProps({ hypothesis: /** @type {import("vue").PropType<import("../../../lib/types.ts").Hypothesis>} */ (Object), selectedId: String, busy: Boolean, focused: Boolean });
 const emit = defineEmits(["select", "inspect", "move", "add", "layout", "focus"]);
 const viewport = ref(null);
 const viewportWidth = ref(0);

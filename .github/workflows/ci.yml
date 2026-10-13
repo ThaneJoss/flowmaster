@@ -16,6 +16,8 @@ jobs:
           node-version-file: .node-version
       - run: npm install --global pnpm@11.25.0
       - run: pnpm install --frozen-lockfile
+      - name: Audit dependency advisories
+        run: pnpm audit --audit-level=high
       - run: pnpm lint
       - run: pnpm check
       - run: pnpm test
