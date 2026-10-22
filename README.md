@@ -96,7 +96,7 @@ pnpm dev
 
 ### PR 检查
 
-[GitHub Actions](.github/workflows/ci.yml) 在 push、PR、merge group 和手动运行时调用固定版本 `ThaneJoss/github-ci/.github/workflows/ci.yml@89624ba02d911171a634ddeb4848c298f3b1c842`。通用 CI 从标准项目元数据发现并执行 `pnpm lint`、`pnpm run typecheck`、`pnpm test`、`pnpm build`、JavaScript 语法检查及依赖通告审计（high/critical 阻断）；Gate 要求这些检查成功。`pnpm test` 包含隔离 MCP/D1 测试，构建脚本包含静态产物验证。
+[GitHub Actions](.github/workflows/ci.yml) 在 push、PR、merge group 和手动运行时调用自动跟随 `main` 的通用模板 `ThaneJoss/github-ci/.github/workflows/ci.yml@main`。通用 CI 从标准项目元数据发现并执行 `pnpm lint`、`pnpm run typecheck`、`pnpm test`、`pnpm build`、JavaScript 语法检查及依赖通告审计（high/critical 阻断）；Gate 要求这些检查成功。`pnpm test` 包含隔离 MCP/D1 测试，构建脚本包含静态产物验证。
 
 独立的 `pnpm test:worker` 打包/Worker smoke、本地部署诊断和下述浏览器/axe smoke 仍保留为本地补充验证，通用自动发现不会执行它们。浏览器测试使用构建产物与模拟 MCP，覆盖分页、会话取消、记录、画布、桌面/触控操作、WCAG A/AA、320px 布局和减少动态效果；失败时在本地保留截图。
 
