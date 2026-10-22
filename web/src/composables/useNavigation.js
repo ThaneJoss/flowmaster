@@ -1,6 +1,7 @@
 import { computed, onBeforeUnmount, ref } from "vue";
 
 const decode = value => { try { return decodeURIComponent(value || ""); } catch { return ""; } };
+/** @returns {{ page: "projects" | "project" | "settings", projectId?: string, tab?: string, hypothesisId?: string, nodeId?: string, docs?: boolean, legacyTab?: string }} */
 function parseHash() {
   const [path, query = ""] = location.hash.slice(1).split("?");
   const parts = path.split("/").filter(Boolean).map(decode);

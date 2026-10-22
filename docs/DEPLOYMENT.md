@@ -36,6 +36,14 @@ GitHub CI 在 PR 和 `main` push 上执行；它与 Workers Builds 是独立系�
 3. 为预览配置至少 32 字符的 `ADMIN_TOKEN` Secret。
 4. 完成只读诊断，再运行分支预览发布。
 
+### 构建成功但显示 No Preview URL
+
+分支预览构建是否启用、Worker 是否允许预览 URL、以及实际部署是否具有应用绑定是三项独立条件。GitHub 上的 Workers Builds 绿灯只证明该构建命令成功；机器人显示 `No Preview URL` 时，不能把它当作已可访问的验收环境。
+
+只读排查时，核对 Worker 的 `subdomain.previews_enabled`、该分支 preview 的 `urls`，以及最新 preview deployment 的绑定名称和类型。若 URL 开关关闭且 `urls` 为空，就没有可以交付的预览地址；若实际部署缺少 `DB` 或 `ADMIN_TOKEN`，即使出现 URL，应用仍不能正常使用。`deploy:doctor --remote` 只检查预览默认绑定，不检查这些 URL 开关或已部署实例。
+
+需要调整时，由账号所有者先确认预览访问策略，再在现有 Cloudflare 设置中允许所需预览 URL，并配置隔离的预览 D1 与专用预览 Secret。保留生产 workers.dev、Access、自定义域名、生产 D1 和生产 Secret 的现状；不要为了取得链接而复制生产凭据或更换部署方式。随后确认新构建对应的提交 SHA，从 API 或机器人读取实际 URL，再验收页面及应用连接。此操作会涉及公开访问范围、凭据或资源，不能由仓库代码检查代为完成。参见 [Cloudflare 预览工作流区别](https://developers.cloudflare.com/workers/previews/compare-workflows/) 与 [URL 可访问性设置](https://developers.cloudflare.com/workers/versions-and-deployments/version-urls/)。
+
 生产 `ADMIN_TOKEN`、预览 `ADMIN_TOKEN` 和部署用的 Cloudflare API Token 是不同用途的凭据。将 Secret 配置到相应 Worker 环境，不要提交到 Git。
 
 `pnpm db:migrate:remote` 使用顶层生产 `DB` 配置。迁移预览库时，先在仓库根目录创建独立配置 `wrangler.preview-migrations.jsonc`，填入实际预览数据库名和 UUID；不要填生产数据库 ID：
@@ -82,7 +90,7 @@ pnpm run deploy:doctor --remote
 
 ### 让 agent 或命令行读取 Workers Builds 日志
 
-GitHub 的 Cloudflare check 可能只有构建详情链接，没有日志正文。`wrangler tail` 查看的是 Worker **运行时**日志；本项目固定的 Wrangler 4.92.0 没有读取 Workers Builds 历史构建日志的命令。可以使用以下两种官方途径。
+GitHub 的 Cloudflare check 可能只有构建详情链接，没有日志正文。`wrangler tail` 查看的是 Worker **运行时**日志；Workers Builds 历史构建日志通过以下官方途径读取。
 
 **Agent：Cloudflare Workers Builds MCP**
 

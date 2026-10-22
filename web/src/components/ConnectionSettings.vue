@@ -2,7 +2,11 @@
 import { ref, watch } from "vue";
 import UiField from "./UiField.vue";
 import UiButton from "./UiButton.vue";
-const props = defineProps({ connection: Object, connecting: Boolean, tokens: Array, tokensLoading: Boolean, settingsError: String, docsOpen: Boolean, pendingTokenId: String });
+const props = defineProps({
+  connection: /** @type {import('vue').PropType<import('../../../lib/client.ts').Connection>} */ (Object),
+  tokens: /** @type {import('vue').PropType<import('../../../lib/workspace-client.ts').AccessToken[]>} */ (Array),
+  connecting: Boolean, tokensLoading: Boolean, settingsError: String, docsOpen: Boolean, pendingTokenId: String,
+});
 const emit = defineEmits(["connect", "disconnect", "create-token", "revoke-token", "refresh-tokens", "seed"]);
 const baseUrl = ref(props.connection?.baseUrl || "");
 const token = ref("");

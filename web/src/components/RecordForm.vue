@@ -4,7 +4,20 @@ import UiField from "./UiField.vue";
 import UiButton from "./UiButton.vue";
 import ResourcePicker from "./ResourcePicker.vue";
 import PageControls from "./PageControls.vue";
-const props = defineProps({ record: Object, hypotheses: Array, visibleHypotheses: Array, hypothesisQuery: String, hypothesisTotal: Number, hypothesisOffset: Number, hypothesisNextOffset: { type: Number, default: null }, hypothesisLoading: Boolean, hypothesisError: String, resources: Array, visibleResources: Array, resourceQuery: String, resourceTotal: Number, resourceOffset: Number, resourceNextOffset: { type: Number, default: null }, resourceLoading: Boolean, resourceError: String, initialHypothesisId: String, initialNodeId: String, initialTitle: String, busy: Boolean });
+const props = defineProps({
+  /** @type {import("vue").PropType<import("../../../lib/types").Experiment>} */
+  record: Object,
+  /** @type {import("vue").PropType<import("../../../lib/types").Hypothesis[]>} */
+  hypotheses: Array,
+  /** @type {import("vue").PropType<import("../../../lib/types").Hypothesis[]>} */
+  visibleHypotheses: Array,
+  hypothesisQuery: String, hypothesisTotal: Number, hypothesisOffset: Number, hypothesisNextOffset: { type: Number, default: null }, hypothesisLoading: Boolean, hypothesisError: String,
+  /** @type {import("vue").PropType<import("../../../lib/types").Resource[]>} */
+  resources: Array,
+  /** @type {import("vue").PropType<import("../../../lib/types").Resource[]>} */
+  visibleResources: Array,
+  resourceQuery: String, resourceTotal: Number, resourceOffset: Number, resourceNextOffset: { type: Number, default: null }, resourceLoading: Boolean, resourceError: String, initialHypothesisId: String, initialNodeId: String, initialTitle: String, busy: Boolean
+});
 const emit = defineEmits(["submit", "cancel", "resource-filter", "resource-page", "hypothesis-filter", "hypothesis-page"]);
 const hypothesisId = ref(props.record?.hypothesisId || props.initialHypothesisId || props.hypotheses[0]?.id || "");
 const nodeId = ref(props.record?.nodeId || props.initialNodeId || "");
