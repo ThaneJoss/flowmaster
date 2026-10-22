@@ -96,11 +96,13 @@ pnpm dev
 
 ### PR 检查
 
-[GitHub Actions](.github/workflows/ci.yml) 在每个 PR 和 `main` push 上执行依赖通告审计（high/critical 阻断）、`pnpm lint`、`pnpm check`、`pnpm test`、前端构建与产物验证、Worker dry-run 打包、本地 Worker / D1 集成检查和本地部署配置检查。浏览器使用构建产物与模拟 MCP，验证分页、会话取消、记录、画布、桌面/触控操作，并运行 axe WCAG A/AA 扫描、320px 布局与减少动态效果检查；失败时保留截图。
+[GitHub Actions](.github/workflows/ci.yml) 在 push、PR、merge group 和手动运行时调用固定版本 `ThaneJoss/github-ci/.github/workflows/ci.yml@89624ba02d911171a634ddeb4848c298f3b1c842`。通用 CI 从标准项目元数据发现并执行 `pnpm lint`、`pnpm run typecheck`、`pnpm test`、`pnpm build`、JavaScript 语法检查及依赖通告审计（high/critical 阻断）；Gate 要求这些检查成功。`pnpm test` 包含隔离 MCP/D1 测试，构建脚本包含静态产物验证。
 
-`pnpm check` 先按原有 strict 配置检查 `.ts`，再通过 `vue-tsc` 检查全部 Vue 单文件组件、模板和浏览器 JavaScript。渐进式 [Vue 配置](tsconfig.vue.json) 开启 `checkJs` 与 `strictTemplates`，检查未知模板标识符及已声明类型的 props/表达式；现有 JavaScript 暂未启用 `noImplicitAny`、`strictNullChecks` 和未知 catch 类型，并允许 attrs/events 透传。未注解的动态数据仍可能推断为 `any`，不等于全部 JavaScript 已完成严格类型化。自动无障碍扫描也不能代替人工屏幕阅读器验收。CI 不连接线上工作区或执行部署、远端迁移。
+独立的 `pnpm test:worker` 打包/Worker smoke、本地部署诊断和下述浏览器/axe smoke 仍保留为本地补充验证，通用自动发现不会执行它们。浏览器测试使用构建产物与模拟 MCP，覆盖分页、会话取消、记录、画布、桌面/触控操作、WCAG A/AA、320px 布局和减少动态效果；失败时在本地保留截图。
 
-如需本地运行与 CI 相同的浏览器检查，在 `pnpm build` 后执行（预览服务需保持运行）：
+`pnpm check` 委托给标准入口 `pnpm run typecheck`，先按原有 strict 配置检查 `.ts`，再通过 `vue-tsc` 检查全部 Vue 单文件组件、模板和浏览器 JavaScript。渐进式 [Vue 配置](tsconfig.vue.json) 开启 `checkJs` 与 `strictTemplates`，检查未知模板标识符及已声明类型的 props/表达式；现有 JavaScript 暂未启用 `noImplicitAny`、`strictNullChecks` 和未知 catch 类型，并允许 attrs/events 透传。未注解的动态数据仍可能推断为 `any`，不等于全部 JavaScript 已完成严格类型化。自动无障碍扫描也不能代替人工屏幕阅读器验收。CI 不连接线上工作区或执行部署、远端迁移。
+
+如需运行本地补充浏览器检查，在 `pnpm build` 后执行（预览服务需保持运行）：
 
 ```sh
 npm install --prefix /tmp/flowmaster-browser --no-package-lock --ignore-scripts playwright@1.61.1 axe-core@4.12.1
