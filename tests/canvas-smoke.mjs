@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { mkdirSync } from 'node:fs';
 import { nodeOperationSchemas, schemas } from '../lib/server/validation.ts';
+import { checkAccessibility, checkTouchLayout } from './accessibility.mjs';
 const require = createRequire(import.meta.url);
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE);
 const browser = await chromium.launch({ headless: true, executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE });
@@ -105,6 +106,16 @@ try {
       await page.getByRole('heading', { name: 'Hypothesis one', exact: true }).waitFor();
     };
     await page.goto(origin); await login();
+    await checkAccessibility(page, mobile ? 'mobile canvas' : 'desktop canvas');
+    if (mobile) {
+      await checkTouchLayout(page, 'mobile canvas');
+      await page.setViewportSize({ width: 320, height: 800 });
+      await checkTouchLayout(page, 'narrow mobile canvas');
+      const headingBox = await page.locator('.flow-heading h2').boundingBox();
+      const actionsBox = await page.locator('.flow-title-row .flow-actions').boundingBox();
+      assert.ok(headingBox.y >= actionsBox.y + actionsBox.height, 'flow title stays below touch actions');
+      await page.setViewportSize({ width: 390, height: 844 });
+    }
     if (!mobile) {
       const sidebar = page.locator('#hypothesis-list');
       const lastHypothesis = sidebar.getByRole('button', { name: /Hypothesis 201/ });
@@ -123,6 +134,8 @@ try {
       await switchHypothesis('Hypothesis one');
     }
     await choose('A');
+    await checkAccessibility(page, mobile ? 'mobile step drawer' : 'desktop step drawer');
+    if (mobile) await checkTouchLayout(page, 'mobile step drawer');
     await drawer.getByLabel('目标 / 说明', { exact: true }).fill('Unsaved A');
     if (!mobile) {
       await choose('B'); await drawer.getByLabel('目标 / 说明', { exact: true }).fill('Unsaved B');

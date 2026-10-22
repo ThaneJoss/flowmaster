@@ -2,7 +2,10 @@
 import { ref, watch } from "vue";
 import UiButton from "./UiButton.vue";
 import PageControls from "./PageControls.vue";
-const props = defineProps({ projects: Array, connected: Boolean, loading: Boolean, exporting: Boolean, query: { type: String, default: "" }, total: Number, offset: Number, nextOffset: { type: Number, default: null }, error: String });
+const props = defineProps({
+  projects: /** @type {import('vue').PropType<import('../../../lib/types.ts').Project[]>} */ (Array),
+  connected: Boolean, loading: Boolean, exporting: Boolean, query: { type: String, default: "" }, total: Number, offset: Number, nextOffset: { type: Number, default: null }, error: String,
+});
 const emit = defineEmits(["create", "edit", "remove", "open", "settings", "export", "refresh", "filter", "page"]);
 const search = ref(props.query);
 watch(() => props.query, value => { search.value = value; });

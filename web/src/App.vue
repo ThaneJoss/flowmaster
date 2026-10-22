@@ -23,6 +23,7 @@ const { projectsTotal, projectsOffset, projectsNextOffset, hypothesesTotal, hypo
 const { route, go, project: navigateProject } = useNavigation();
 const mainElement = ref(null), notice = ref(""), modal = ref(null), modalBusy = ref(false), settingsError = ref(""), focused = ref(false);
 const projectQuery = ref(""), flowQuery = ref(""), resourceQuery = ref("");
+/** @type {import("vue").Ref<{ q: string, status: import("../../lib/types.ts").Status | "", hypothesisId: string }>} */
 const recordFilters = ref({ q: "", status: "", hypothesisId: "" });
 const recordLimit = 30, historyLimit = 10;
 const savedFilters = new Map(), loadedProjects = new Set();
@@ -99,7 +100,7 @@ async function ensureProject(id, refresh = false) {
   finally { if (projectLoad === task) projectLoad = null; }
 }
 async function loadRecords(offset = recordOffset.value) {
-  await perform(() => ws.loadRecords({ ...recordFilters.value, offset, limit: recordLimit }));
+  await perform(() => ws.loadRecords({ ...recordFilters.value, status: recordFilters.value.status || undefined, offset, limit: recordLimit }));
 }
 function filterRecords(filters) { recordFilters.value = filters; savedFilters.set(currentProject.value.id, { ...filters }); loadRecords(0); }
 async function loadHistory(offset = historyOffset.value) {
@@ -124,8 +125,8 @@ async function loadCurrentResult(force = false) {
   finally { if (version === resultVersion) resultLoading.value = false; }
 }
 watch(connection, (value, previous) => { if (previous && value !== previous) clearDrafts(); });
-watch(() => [recordsTotal.value, loading.records], ([total, busy]) => { if (!busy && !errors.records && route.value.tab === "records" && recordOffset.value > 0 && recordOffset.value >= total) loadRecords(0); });
-watch(() => [nodeHistoryTotal.value, loading.nodeHistory], ([total, busy]) => { if (!busy && !errors.nodeHistory && route.value.tab === "flows" && selectedNode.value && historyOffset.value > 0 && historyOffset.value >= total) loadHistory(0); });
+watch([recordsTotal, () => loading.records], ([total, busy]) => { if (!busy && !errors.records && route.value.tab === "records" && recordOffset.value > 0 && recordOffset.value >= total) loadRecords(0); });
+watch([nodeHistoryTotal, () => loading.nodeHistory], ([total, busy]) => { if (!busy && !errors.nodeHistory && route.value.tab === "flows" && selectedNode.value && historyOffset.value > 0 && historyOffset.value >= total) loadHistory(0); });
 watch(() => [current.value?.id, selectedNode.value?.id, selectedNode.value?.currentResultId], () => { resultLoading.value = false; loadCurrentResult(); });
 watch(() => [route.value.page, route.value.projectId, route.value.tab], (next, previous) => {
   if (previous && next.every((value, index) => value === previous[index])) return;
@@ -194,6 +195,7 @@ function editFlow(item) {
   });
 }
 function removeFlow(item) { const target = clone(item); confirmAction("删除流程", `“${target.title}”的步骤和关联执行记录都会删除，无法从页面恢复。`, async () => { await ws.deleteHypothesis(target.id); if (route.value.hypothesisId === target.id) navigateProject(target.projectId); message("流程已删除"); }); }
+/** @param {{ width?: number }} options */
 function addNode({ width } = {}) {
   const flow = current.value;
   if (!flow) return;
@@ -273,7 +275,7 @@ function createToken() {
 function revokeToken(token) { confirmAction("撤销访问 Token", `使用“${token.name}”的客户端将立即失去访问权限。`, async () => { await ws.revokeToken(token.id); message("Token 已撤销"); }); }
 function seed() { confirmAction("导入示例项目", "仅可向空工作区导入，不会覆盖已有数据。", async () => { await ws.seed(); go("projects"); message("示例项目已导入"); }); }
 function exportWorkspace() { perform(async () => download(await ws.exportWorkspace(), "flowmaster-workspace.json")); }
-function exportRecords() { const filters = { ...recordFilters.value }; perform(async () => download(await ws.exportRecords(filters), "flowmaster-records.json")); }
+function exportRecords() { const filters = { ...recordFilters.value, status: recordFilters.value.status || undefined }; perform(async () => download(await ws.exportRecords(filters), "flowmaster-records.json")); }
 function refreshProject() {
   const id = currentProject.value?.id;
   if (!id) return;

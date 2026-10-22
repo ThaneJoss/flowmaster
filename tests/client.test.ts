@@ -96,7 +96,7 @@ test('switching accounts cannot restore the previous workspace or issue follow-u
     const oldSession = new AbortController();
     const oldApi = makeClient(connection, oldSession.signal);
     const newApi = makeClient({ ...connection, token: 'another-test-token' }, new AbortController().signal);
-    let workspace = 'empty';
+    let workspace: string;
     const oldPending = oldApi<string>('/workspace').then(value => { workspace = value; });
     const oldRequest = await oldRequested.promise;
     oldSession.abort();
