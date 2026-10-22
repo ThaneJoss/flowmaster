@@ -18,7 +18,7 @@ GitHub 检查、生产打包和 Cloudflare 分支预览是不同步骤。先确�
 
 Vite、TypeScript、Wrangler 位于 `devDependencies`。安装阶段不能省略开发依赖；自定义安装命令应使用 `pnpm install --frozen-lockfile --prod=false`。保留锁文件与依赖安装安全校验，遇到安装失败先查看具体错误，不要通过关闭校验掩盖问题。
 
-GitHub CI 在 PR 和 `main` push 上执行；它与 Workers Builds 是独立系统。CI 无 Cloudflare 凭证时只执行本地部署诊断。
+GitHub 通用 CI 在 push、PR、merge group 和手动运行时执行；它与 Workers Builds 是独立系统。CI 的实际自动检查范围见 [README](../README.md#pr-检查)，不执行独立部署诊断或发布。`pnpm run deploy:doctor` 是本地补充诊断入口，未提供 `--remote` 时不会查询远端。
 
 ## 生产与预览配置
 
