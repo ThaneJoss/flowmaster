@@ -43,7 +43,18 @@ export const schemas = {
 export const tokenSchema = z.object({ name: z.string().trim().min(1).max(80), scope: z.enum(["read", "write", "admin"]), expiresInDays: z.number().int().min(1).max(365) });
 export const resultSchema = z.object({ nodeId: id, title, status, resourceIds, summary: z.string().trim().min(1).max(16000), duration: z.string().max(100).default("") });
 
-export const nodePatchSchema = nodeSchema.omit({ id: true, x: true, y: true, currentResultId: true, status: true, summary: true, duration: true }).partial().strict();
+// Zod 4 applies defaults even under .optional(). Updates must only contain fields
+// the caller supplied; defaults still apply inside complete nested records.
+const partialFields = <Shape extends Record<string, z.ZodType>>(fields: Shape) => {
+    const shape = Object.fromEntries(Object.entries(fields).map(([key, field]) => [
+        key, z.optional(field instanceof z.ZodDefault ? field.unwrap() : field),
+    ])) as {
+        [Key in keyof Shape]: z.ZodOptional<Shape[Key] extends z.ZodDefault<infer Inner> ? Inner : Shape[Key]>;
+    };
+    return z.object(shape);
+};
+
+export const nodePatchSchema = partialFields(nodeSchema.omit({ id: true, x: true, y: true, currentResultId: true, status: true, summary: true, duration: true }).shape).strict();
 export const nodeRevisionSchema = { hypothesisId: id, revision: z.number().int().positive() };
 export const positionSchema = z.object({ id, x: z.number().min(0).max(MAX_NODE_COORDINATE), y: z.number().min(0).max(MAX_NODE_COORDINATE) });
 export const nodeOperationSchemas = {
@@ -56,8 +67,9 @@ export const nodeOperationSchemas = {
 };
 
 export const updateSchemas = {
-    projects: schemas.projects.partial().extend({ revision: z.number().int().positive() }),
-    hypotheses: schemas.hypotheses.innerType().partial().extend({ revision: z.number().int().positive() }),
-    experiments: schemas.experiments.partial().extend({ revision: z.number().int().positive() }),
-    resources: schemas.resources.partial().extend({ revision: z.number().int().positive() }),
+    projects: partialFields(schemas.projects.shape).extend({ revision: z.number().int().positive() }),
+    // The service validates the complete merged hypothesis, including its DAG.
+    hypotheses: partialFields(schemas.hypotheses.shape).extend({ revision: z.number().int().positive() }),
+    experiments: partialFields(schemas.experiments.shape).extend({ revision: z.number().int().positive() }),
+    resources: partialFields(schemas.resources.shape).extend({ revision: z.number().int().positive() }),
 };

@@ -139,6 +139,53 @@ test('MCP persists research and enforces access, revisions and data integrity', 
         assert.equal((await call('resources_delete', { id: resource.id, revision: resource2.revision })).status, 200);
         assert.equal((await call('projects_delete', { id: p.id, revision: p2.revision })).status, 200);
     });
+    await t.test('partial MCP updates preserve populated fields through tool parsing and storage', async () => {
+        const p = (await call('projects_create', { data: { name: 'Compatibility project', description: 'Keep the project context' } })).data;
+        assert.equal((await call('projects_update', { id: p.id, data: { revision: p.revision, name: 'Renamed project' } })).status, 200);
+        assert.equal((await call('projects_get', { id: p.id })).data.description, p.description);
+
+        const resource = (await call('resources_create', { data: { projectId: p.id, name: 'Evidence', type: 'document', url: 'https://example.com/evidence', description: 'Keep the evidence provenance' } })).data;
+        assert.equal((await call('resources_update', { id: resource.id, data: { revision: resource.revision, name: 'Renamed evidence' } })).status, 200);
+        const savedResource = (await call('resources_get', { id: resource.id })).data;
+        assert.equal(savedResource.url, resource.url);
+        assert.equal(savedResource.description, resource.description);
+
+        const step = {
+            ...emptyNode('compat-step'), title: 'Original step', inputs: 'Original input', output: 'Original output',
+            rationale: 'Original rationale', method: 'Original method', conclusion: 'Original conclusion', nextAction: 'Original next action',
+            startedAt: '2026-11-06 09:00 +0800', progress: 'in_progress', resourceIds: [resource.id],
+        };
+        let flow = (await call('hypotheses_create', { data: {
+            projectId: p.id, title: 'Original flow', description: 'Keep the flow context', baseline: 'Keep the baseline',
+            status: 'pending', nodes: [step], edges: [],
+        } })).data;
+        const original = (await call('experiments_create', { data: {
+            hypothesisId: flow.id, nodeId: step.id, title: 'Original result', status: 'verified', summary: 'Keep the measurement',
+            duration: '12 minutes', resourceIds: [resource.id], logs: [{ time: '09:12', message: 'Keep the evidence log' }],
+        } })).data;
+        assert.ok(original.id);
+        flow = (await call('hypotheses_get', { id: flow.id })).data;
+        assert.equal((await call('hypotheses_update', { id: flow.id, data: { revision: flow.revision, title: 'Renamed flow' } })).status, 200);
+        const renamedFlow = (await call('hypotheses_get', { id: flow.id })).data;
+        assert.equal(renamedFlow.description, flow.description);
+        assert.equal(renamedFlow.baseline, flow.baseline);
+        assert.deepEqual(renamedFlow.nodes, flow.nodes);
+        assert.deepEqual(renamedFlow.edges, flow.edges);
+        assert.equal((await call('nodes_update', { hypothesisId: flow.id, revision: renamedFlow.revision, nodeId: step.id, patch: { title: 'Renamed step' } })).status, 200);
+        const renamedStep = (await call('hypotheses_get', { id: flow.id })).data.nodes[0];
+        assert.deepEqual(renamedStep, { ...flow.nodes[0], title: 'Renamed step' });
+
+        assert.equal((await call('experiments_update', { id: original.id, data: { revision: original.revision, title: 'Renamed result' } })).status, 200);
+        const savedResult = (await call('experiments_get', { id: original.id })).data;
+        for (const field of ['summary', 'duration', 'logs', 'resourceIds', 'source', 'recordedAt', 'nodeTitle']) {
+            assert.deepEqual(savedResult[field], original[field], field);
+        }
+        assert.equal(savedResult.title, 'Renamed result');
+        const selected = (await call('hypotheses_get', { id: flow.id })).data.nodes[0];
+        assert.equal(selected.currentResultId, original.id);
+        assert.equal(selected.summary, original.summary);
+        assert.equal(selected.duration, original.duration);
+    });
     await t.test('revoked and expired tokens immediately lose access', async () => {
         assert.equal((await call('tokens_revoke', { id: writerId })).status, 200);
         assert.equal((await call('projects_list', {}, writer)).status, 401);

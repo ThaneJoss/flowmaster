@@ -190,7 +190,7 @@ export function createWorkspaceService(env: Bindings, principal: Principal) {
         return { data: kind === "experiments" ? (await withSnapshots([data]))[0] : data };
     }
     async function saveHypothesis(current: Hypothesis, input: unknown, allowSelection = false): Promise<ServiceResult<Hypothesis>> {
-        const raw = parse(z.record(z.unknown()), input);
+        const raw = parse(z.record(z.string(), z.unknown()), input);
         revision(current, raw.revision);
         const value = parse(schemas.hypotheses, { ...current, ...raw });
         if (value.id && value.id !== current.id) fail(422, "ID_MISMATCH", "请求中的 ID 与记录不一致");
@@ -303,7 +303,7 @@ export function createWorkspaceService(env: Bindings, principal: Principal) {
     async function updateExperiment(id: string, input: unknown): Promise<ServiceResult<Experiment>> {
         requireWrite();
         const current = await required("experiments", id) as Experiment;
-        const raw = parse(z.record(z.unknown()), input);
+        const raw = parse(z.record(z.string(), z.unknown()), input);
         revision(current, raw.revision);
         for (const key of ["hypothesisId", "nodeId", "source"] as const) {
             if (raw[key] !== undefined && raw[key] !== current[key]) fail(422, "IMMUTABLE_RELATION", "实验的研究流程、节点和来源不能修改");
@@ -362,7 +362,7 @@ export function createWorkspaceService(env: Bindings, principal: Principal) {
         if (kind === "experiments") return updateExperiment(id, input);
         const current = await required(kind, id);
         if (kind === "hypotheses") return saveHypothesis(current as Hypothesis, input);
-        const raw = parse(z.record(z.unknown()), input);
+        const raw = parse(z.record(z.string(), z.unknown()), input);
         revision(current, raw.revision);
         const value = parse(schemas[kind], { ...current, ...raw }) as Document;
         if (value.id && value.id !== id) fail(422, "ID_MISMATCH", "请求中的 ID 与记录不一致");
