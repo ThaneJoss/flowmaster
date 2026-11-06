@@ -11,4 +11,4 @@ allowBuilds:
   fsevents: true
 overrides:
   miniflare>sharp: 0.35.5
-  miniflare>undici: 7.29.1
+  miniflare>undici: 7.30.1

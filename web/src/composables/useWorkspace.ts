@@ -390,8 +390,8 @@ export function useWorkspace() {
         assertSession(api); stop('projects'); mergeProject(response.data);
         void Promise.allSettled([loadProjects(projectsQuery)]); return response.data;
     });
-    const deleteProject = (id: string) => mutate([`project:${id}`], async api => {
-        const response = await api.projects.delete(id); assertSession(api); stop('projects');
+    const deleteProject = (id: string, revision: number) => mutate([`project:${id}`], async api => {
+        const response = await api.projects.delete(id, revision); assertSession(api); stop('projects');
         changedProjects.set(id, ++mutationSequence);
         if (projects.value.some(item => item.id === id)) projectsTotal.value = Math.max(0, projectsTotal.value - 1);
         projects.value = projects.value.filter(item => item.id !== id);
@@ -410,9 +410,9 @@ export function useWorkspace() {
         const response = await writeWithRecovery(api, 'project', () => api.hypotheses.update(id, data), () => recoverHypothesis(api, id));
         assertSession(api); mergeHypothesis(response.data); return response.data;
     });
-    const deleteHypothesis = (id: string) => mutate([`hypothesis:${id}`], async api => {
+    const deleteHypothesis = (id: string, revision: number) => mutate([`hypothesis:${id}`], async api => {
         const selected = projectId.value;
-        const response = await api.hypotheses.delete(id); assertSession(api);
+        const response = await api.hypotheses.delete(id, revision); assertSession(api);
         changedHypotheses.set(id, ++mutationSequence);
         allHypotheses.value = allHypotheses.value.filter(item => item.id !== id);
         if (visibleHypotheses.value.some(item => item.id === id)) hypothesesTotal.value = Math.max(0, hypothesesTotal.value - 1);
@@ -427,7 +427,7 @@ export function useWorkspace() {
     const updateNode = (id: string, nodeId: string, patch: NodePatch, upstream?: string[]) => changeNode(id, (api, revision) => api.nodes.update(id, revision, nodeId, patch, upstream));
     const moveNode = (id: string, nodeId: string, position: Pick<NodePosition, 'x' | 'y'>) => changeNode(id, (api, revision) => api.nodes.move(id, revision, nodeId, position));
     const layout = (id: string, positions: NodePosition[]) => changeNode(id, (api, revision) => api.nodes.layout(id, revision, positions));
-    const deleteNode = (id: string, nodeId: string) => changeNode(id, (api, revision) => api.nodes.delete(id, revision, nodeId));
+    const deleteNode = (id: string, nodeId: string, revision: number) => changeNode(id, api => api.nodes.delete(id, revision, nodeId));
     const selectResult = (id: string, nodeId: string, resultId: string | null) => changeNode(id, (api, revision) => api.nodes.selectResult(id, revision, nodeId, resultId));
     const createResult = (id: string, data: ResultInput) => mutate([`hypothesis:${id}`, 'record:new'], async api => {
         const selected = projectId.value;
@@ -450,13 +450,13 @@ export function useWorkspace() {
             return applyResult(api, response, selected);
         });
     };
-    const deleteResult = async (id: string) => {
+    const deleteResult = async (id: string, revision: number) => {
         const expected = requireClient();
         const known = resultCache.get(id) || await getResult(id);
         assertSession(expected);
         return mutate([`record:${id}`, `hypothesis:${known.hypothesisId}`], async api => {
             const selected = projectId.value;
-            const response = await api.experiments.delete(id); assertSession(api);
+            const response = await api.experiments.delete(id, revision); assertSession(api);
             if (response.affectedHypothesis) mergeHypothesis(response.affectedHypothesis);
             if (records.value.some(item => item.id === id)) recordsTotal.value = Math.max(0, recordsTotal.value - 1);
             if (nodeHistory.value.some(item => item.id === id)) nodeHistoryTotal.value = Math.max(0, nodeHistoryTotal.value - 1);
@@ -475,8 +475,8 @@ export function useWorkspace() {
         });
         assertSession(api); mergeResource(response.data); return response.data;
     });
-    const deleteResource = (id: string) => mutate([`resource:${id}`], async api => {
-        const response = await api.resources.delete(id); assertSession(api);
+    const deleteResource = (id: string, revision: number) => mutate([`resource:${id}`], async api => {
+        const response = await api.resources.delete(id, revision); assertSession(api);
         changedResources.set(id, ++mutationSequence);
         allResources.value = allResources.value.filter(item => item.id !== id);
         if (visibleResources.value.some(item => item.id === id)) resourcesTotal.value = Math.max(0, resourcesTotal.value - 1);
