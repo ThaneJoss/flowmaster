@@ -235,25 +235,46 @@ export function createWorkspaceService(env: Bindings, principal: Principal) {
         const titles = current.nodes.filter(node => incomingNodes.get(node.id)?.title !== node.title)
             .map(node => ({ id: node.id, title: node.title }));
         if (titles.length) {
-            const titleJson = JSON.stringify(titles);
+            const titleJson = JSON.stringify(titles), byId = new Map(titles.map(node => [node.id, node.title]));
             const missingTitle = "kind='experiments' AND parent_id=? AND COALESCE(json_extract(data,'$.nodeTitle'),'')='' AND json_extract(data,'$.nodeId') IN (SELECT json_extract(value,'$.id') FROM json_each(?))";
-            const validRecordedAt = "json_extract(data,'$.recordedAt') GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T*' AND julianday(json_extract(data,'$.recordedAt')) IS NOT NULL";
-            // Freeze inferred recording time before updated_at changes. Existing
-            // timestamps, snapshots, logs and evidence remain untouched.
-            const preservedData = `json_set(
-                CASE WHEN ${validRecordedAt} THEN data ELSE json_set(data,
-                    '$.recordedAt', COALESCE(strftime('%Y-%m-%dT%H:%M:%fZ', ${recordTime}), updated_at),
-                    '$.recordedAtInferred', json('true')) END,
-                '$.id', id, '$.nodeTitle', (SELECT json_extract(title.value,'$.title') FROM json_each(?) title WHERE json_extract(title.value,'$.id')=json_extract(documents.data,'$.nodeId')),
-                '$.revision', revision+1, '$.updatedAt', ?)`;
-            // Reject growth beyond the document budget before changing either
-            // record. All supported experiment mutations also CAS the parent,
-            // so a concurrent change makes the first batch statement fail.
-            const oversized = await db.prepare(`SELECT 1 AS oversized FROM documents WHERE ${missingTitle} AND length(CAST(${preservedData} AS BLOB)) > ? LIMIT 1`)
-                .bind(current.id, titleJson, titleJson, stamp, maxDocumentBytes).first();
-            if (oversized) fail(413, "DOCUMENT_TOO_LARGE", "历史记录补充标题后超过 600 KB，请先减少记录内容");
-            statements.push(db.prepare(`UPDATE documents SET data=${preservedData}, revision=revision+1, updated_at=? WHERE ${missingTitle} AND changes()=1`)
-                .bind(titleJson, stamp, stamp, current.id, titleJson));
+            // Fetch only bounded pages of metadata for records missing snapshots.
+            // Use the same JavaScript date parser as unpack: SQLite accepts a
+            // different set of legacy timestamps (for example +0800 offsets).
+            let afterId = "", precedingChanges = 1;
+            for (;;) {
+                const page = await db.prepare(`SELECT id,revision,updated_at,
+                    json_extract(data,'$.nodeId') AS node_id,
+                    json_extract(data,'$.recordedAt') AS recorded_at,
+                    (SELECT json_group_array(time) FROM (
+                        SELECT json_extract(log.value,'$.time') AS time
+                        FROM json_each(documents.data,'$.logs') log ORDER BY CAST(log.key AS INTEGER)
+                    )) AS log_times
+                    FROM documents WHERE ${missingTitle} AND id > ? ORDER BY id LIMIT 25`)
+                    .bind(current.id, titleJson, afterId).all<{ id: string; revision: number; updated_at: string; node_id: string; recorded_at: unknown; log_times: string }>();
+                if (!page.results.length) break;
+                const patches = page.results.map(record => {
+                    const patch: Document = { id: record.id, nodeTitle: byId.get(record.node_id)!, revision: record.revision + 1, updatedAt: stamp };
+                    if (!validTime(record.recorded_at)) {
+                        const first = (JSON.parse(record.log_times) as unknown[]).find(validTime);
+                        patch.recordedAt = first ? new Date(first).toISOString() : record.updated_at;
+                        patch.recordedAtInferred = true;
+                    }
+                    return patch;
+                });
+                const patchJson = JSON.stringify(patches);
+                // Merge small patches inside D1. Historical log messages and
+                // evidence never cross the binding. Validate growth before writes.
+                const oversized = await db.prepare("SELECT 1 AS oversized FROM documents d JOIN json_each(?) patch ON d.id=json_extract(patch.value,'$.id') WHERE d.kind='experiments' AND d.parent_id=? AND length(CAST(json_patch(d.data,patch.value) AS BLOB)) > ? LIMIT 1")
+                    .bind(patchJson, current.id, maxDocumentBytes).first();
+                if (oversized) fail(413, "DOCUMENT_TOO_LARGE", "历史记录补充标题后超过 600 KB，请先减少记录内容");
+                // Supported experiment mutations CAS the parent. After its CAS,
+                // each nonempty page must update every row before the next can run.
+                statements.push(db.prepare("UPDATE documents SET data=json_patch(data,(SELECT patch.value FROM json_each(?) patch WHERE json_extract(patch.value,'$.id')=documents.id)), revision=revision+1, updated_at=? WHERE kind='experiments' AND parent_id=? AND id IN (SELECT json_extract(value,'$.id') FROM json_each(?)) AND changes()=?")
+                    .bind(patchJson, stamp, current.id, patchJson, precedingChanges));
+                precedingChanges = page.results.length;
+                afterId = page.results.at(-1)!.id;
+                if (page.results.length < 25) break;
+            }
         }
         const results = await db.batch(statements);
         await conflict(results[0].meta.changes);

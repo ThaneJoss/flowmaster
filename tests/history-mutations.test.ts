@@ -20,12 +20,16 @@ test('history mutations preserve evidence without returning historical bodies to
     const db = proxy.env.DB as D1Database;
     const originalStatements = new WeakMap<D1PreparedStatement, D1PreparedStatement>();
     let returnedBytes = 0, returnedHistoryBody = false;
+    let returnedPageSizes: number[] = [];
     let beforeBatch: (() => Promise<void>) | undefined;
 
     function observeResult(value: unknown) {
         const serialized = JSON.stringify(value) || '';
         returnedBytes += Buffer.byteLength(serialized, 'utf8');
         returnedHistoryBody ||= serialized.includes(historyMarker);
+        if (value && typeof value === 'object' && 'results' in value && Array.isArray(value.results)) {
+            returnedPageSizes.push(value.results.length);
+        }
     }
     function observeStatement(statement: D1PreparedStatement): D1PreparedStatement {
         const wrapped = new Proxy(statement, {
@@ -63,12 +67,13 @@ test('history mutations preserve evidence without returning historical bodies to
     });
     const service = createWorkspaceService({ DB: observedDb }, { id: 'writer', scope: 'write' });
     async function bounded<T>(operation: () => Promise<T>): Promise<T> {
-        returnedBytes = 0; returnedHistoryBody = false;
+        returnedBytes = 0; returnedHistoryBody = false; returnedPageSizes = [];
         try {
             return await operation();
         } finally {
             assert.equal(returnedHistoryBody, false, 'historical evidence must remain inside D1 during mutations');
-            assert.ok(returnedBytes < 16000, 'binding results should contain only the small flow, project and validation metadata');
+            assert.ok(returnedBytes < 16000, 'binding results should contain only the small flow, project and bounded history metadata');
+            assert.ok(returnedPageSizes.every(size => size <= 25), 'legacy metadata pages must contain at most 25 records');
         }
     }
     async function insert(kind: Collection, document: Record<string, unknown>) {
@@ -158,7 +163,33 @@ test('history mutations preserve evidence without returning historical bodies to
                 item: experiment('legacy_fixed', flow.id, { recordedAt: '2026-03-04T05:06:07.890Z', recordedAtInferred: false }),
                 recording: { recordedAt: '2026-03-04T05:06:07.890Z', recordedAtInferred: false },
             },
+            {
+                item: experiment('legacy_basic_offset_log', flow.id, {
+                    logs: [{ time: '2026-04-01T10:15:00.123+0800', message: historyMarker }],
+                }),
+                recording: { recordedAt: '2026-04-01T02:15:00.123Z', recordedAtInferred: true },
+            },
+            {
+                item: experiment('legacy_basic_offset_recorded', flow.id, {
+                    recordedAt: '2026-03-04T05:06:07.890+0800', recordedAtInferred: false,
+                }),
+                recording: { recordedAt: '2026-03-04T05:06:07.890+0800', recordedAtInferred: false },
+            },
+            {
+                item: experiment('legacy_fraction', flow.id, {
+                    logs: [{ time: '2026-04-01T10:15:00.1236Z', message: historyMarker }],
+                }),
+                recording: { recordedAt: '2026-04-01T10:15:00.123Z', recordedAtInferred: true },
+            },
         ];
+        // Cross the 25-record metadata page boundary. Every legacy row must be
+        // patched even though the first history UPDATE changes more than one row.
+        for (let index = cases.length; index < 30; index++) {
+            cases.push({
+                item: experiment('legacy_page_' + index, flow.id),
+                recording: { recordedAt: stamp, recordedAtInferred: true },
+            });
+        }
         const untouched = [
             experiment('legacy_existing_snapshot', flow.id, { nodeTitle: 'Historical title', source: 'agent' }),
             experiment('legacy_other_node', flow.id, { nodeId: 'other' }),
@@ -171,6 +202,7 @@ test('history mutations preserve evidence without returning historical bodies to
         }))).data;
         assert.equal(flow.revision, 2);
         assert.notEqual(flow.updatedAt, stamp);
+        assert.ok(returnedPageSizes.filter(size => size > 0).length >= 2, 'the fixture must exercise multiple metadata pages');
         for (const { item, recording } of cases) {
             const saved = await read(item.id);
             assert.deepEqual(saved.document, {
@@ -237,9 +269,9 @@ test('history mutations preserve evidence without returning historical bodies to
 
     await t.test('a failed hypothesis CAS does not backfill history independently', async () => {
         const flow = await setup('history_conflict');
-        const record = experiment('conflict_record', flow.id);
-        await insert('experiments', { ...record });
-        const beforeRecord = await read(record.id);
+        const records = Array.from({ length: 30 }, (_, index) => experiment('conflict_record_' + index, flow.id));
+        for (const record of records) await insert('experiments', { ...record });
+        const beforeRecords = await Promise.all(records.map(record => read(record.id)));
         beforeBatch = async () => {
             await db.prepare("UPDATE documents SET revision=revision+1,data=json_set(data,'$.revision',revision+1,'$.title','Concurrent edit') WHERE id=?")
                 .bind(flow.id).run();
@@ -248,7 +280,10 @@ test('history mutations preserve evidence without returning historical bodies to
             hypothesisId: flow.id, revision: flow.revision, nodeId: 'node', patch: { title: 'Must not be saved' },
         })), hasCode('REVISION_CONFLICT'));
         assert.equal(beforeBatch, undefined, 'the competing update must run immediately before the real batch');
-        assert.deepEqual(await read(record.id), beforeRecord);
+        assert.ok(returnedPageSizes.filter(size => size > 0).length >= 2);
+        for (let index = 0; index < records.length; index++) {
+            assert.deepEqual(await read(records[index].id), beforeRecords[index], 'CAS failure must leave every history page unchanged');
+        }
         const savedFlow = await read(flow.id);
         assert.equal(savedFlow.document.title, 'Concurrent edit');
         assert.equal(savedFlow.revision, 2);

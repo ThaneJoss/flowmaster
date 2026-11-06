@@ -59,7 +59,7 @@ async function submitModal(value) {
   if (!target || modalBusy.value) return;
   modalBusy.value = true; target.error = "";
   try { await target.submit(value ?? target.value); if (modal.value === target) modal.value = null; }
-  catch (error) { if (!isRequestCancelled(error) && modal.value === target) target.error = (error.message || "操作失败") + (error.status === 409 ? "；请关闭表单后重新打开，核对最新内容再提交。" : ""); }
+  catch (error) { if (!isRequestCancelled(error) && modal.value === target) target.error = (error.message || "操作失败") + (error.status === 409 ? "；请关闭表单、刷新相关列表并核对最新内容，再重新操作。" : ""); }
   finally { modalBusy.value = false; }
 }
 function download(value, name) {
