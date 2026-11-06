@@ -19,7 +19,7 @@ export interface CollectionClient<T extends BaseRecord> {
     get(id: string, options?: CallOptions): Promise<ToolPayload<T>>;
     create(data: RecordInput<T>, options?: CallOptions): Promise<ToolPayload<T>>;
     update(id: string, data: RecordUpdate<T>, options?: CallOptions): Promise<ToolPayload<T>>;
-    delete(id: string, options?: CallOptions): Promise<ToolPayload<Deleted>>;
+    delete(id: string, revision: number, options?: CallOptions): Promise<ToolPayload<Deleted>>;
 }
 export interface NodePatch extends Partial<Pick<FlowNode, 'title' | 'type' | 'inputs' | 'output' | 'rationale' | 'method' | 'conclusion' | 'nextAction' | 'startedAt'>> {
     progress?: 'pending' | 'in_progress' | 'completed';
@@ -61,7 +61,7 @@ export function makeWorkspaceClient(connection: Connection, sessionSignal?: Abor
             get: (id, options) => call<T>(`${name}_get`, { id }, options),
             create: (data, options) => call<T>(`${name}_create`, { data }, options),
             update: (id, data, options) => call<T>(`${name}_update`, { id, data }, options),
-            delete: (id, options) => call<Deleted>(`${name}_delete`, { id }, options),
+            delete: (id, revision, options) => call<Deleted>(`${name}_delete`, { id, revision }, options),
         };
     }
     return {

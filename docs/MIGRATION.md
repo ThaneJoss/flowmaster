@@ -64,3 +64,7 @@
 - [ ] 项目、流程、资料、项目记录与步骤历史分别筛选 / 分页，短页仍依照 nextOffset 继续；完整导出覆盖全部匹配页，工作区导出覆盖四集合，不只导缓存。
 - [ ] read / write / admin 权限、撤销、过期、Origin 和 revision 校验生效；退出 / 换账号不展示旧数据。
 - [ ] 已有 MCP CRUD 客户端仍读取 data，新客户端合并 affectedHypothesis；旧 REST 和模型调用没有重新开放。
+
+## 删除版本前置条件
+
+四类集合删除工具 `projects_delete`、`hypotheses_delete`、`resources_delete`、`experiments_delete` 现在要求 `{id, revision}`。外部 MCP 客户端需先读取实体，保留用户确认时看到的版本再提交；缺少版本会被拒绝，旧版本返回 409。不要收到冲突后自动获取新版本继续删除，应让用户重新核对。`nodes_delete` 已有的流程 revision 参数不变，网页现在固定使用确认框打开时的版本。Token 撤销接口不变，无数据库迁移。

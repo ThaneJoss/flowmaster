@@ -62,10 +62,6 @@ export function createWorkspaceService(env: Bindings, principal: Principal) {
         const item = await rawGet(kind, id);
         return item || fail(404, "NOT_FOUND", "记录不存在");
     }
-    async function children(hypothesisId: string): Promise<Experiment[]> {
-        const rows = await db.prepare("SELECT id,kind,data,revision,updated_at FROM documents WHERE kind = 'experiments' AND parent_id = ? ORDER BY updated_at DESC,id").bind(hypothesisId).all<Row>();
-        return rows.results.map(unpack) as Experiment[];
-    }
     async function withSnapshots(items: Document[], hypotheses?: Hypothesis[]): Promise<Document[]> {
         const ids = [...new Set(items.filter(item => !item.nodeTitle).map(item => item.hypothesisId))];
         let available = hypotheses;
@@ -218,31 +214,46 @@ export function createWorkspaceService(env: Bindings, principal: Principal) {
             }
             return next;
         });
-        const incomingIds = new Set(value.nodes.map(node => node.id));
-        const changedNodeIds = [...new Set([
-            ...current.nodes.filter(node => !incomingIds.has(node.id)).map(node => node.id),
-            ...value.nodes.filter(node => !previousNodes.has(node.id) || previousNodes.get(node.id)!.title !== node.title).map(node => node.id),
-        ])];
-        let records: Experiment[] = [];
-        if (value.projectId !== current.projectId) records = await children(current.id);
-        else if (changedNodeIds.length) {
-            const rows = await db.prepare("SELECT id,kind,data,revision,updated_at FROM documents WHERE kind='experiments' AND parent_id=? AND json_extract(data,'$.nodeId') IN (SELECT value FROM json_each(?))").bind(current.id, JSON.stringify(changedNodeIds)).all<Row>();
-            records = rows.results.map(unpack) as Experiment[];
+        const incomingNodes = new Map(value.nodes.map(node => [node.id, node]));
+        const addedIds = value.nodes.filter(node => !previousNodes.has(node.id)).map(node => node.id);
+        if (addedIds.length && await db.prepare("SELECT 1 AS used FROM documents WHERE kind='experiments' AND parent_id=? AND json_extract(data,'$.nodeId') IN (SELECT value FROM json_each(?)) LIMIT 1").bind(current.id, JSON.stringify(addedIds)).first()) {
+            fail(409, "NODE_ID_REUSED", "该节点 ID 已用于历史实验，请使用新的节点 ID");
         }
-        for (const node of value.nodes) {
-            if (!previousNodes.has(node.id) && records.some(record => record.nodeId === node.id)) fail(409, "NODE_ID_REUSED", "该节点 ID 已用于历史实验，请使用新的节点 ID");
-        }
-        const references = [...new Set([...value.nodes.flatMap(resourceIds), ...records.flatMap(resourceIds)])];
+        const references = hypothesisResources(value as Hypothesis);
         await checkResources(references, value.projectId);
+        // Historical evidence stays in D1. Only the existence of an invalid
+        // reference crosses the binding; the same guard protects the write.
+        const historyGuard = "NOT EXISTS (SELECT 1 FROM documents e, json_each(e.data, '$.resourceIds') ref LEFT JOIN documents r ON r.id=ref.value AND r.kind='resources' AND r.project_id=? WHERE e.kind='experiments' AND e.parent_id=? AND r.id IS NULL)";
+        const moving = value.projectId !== current.projectId;
+        if (moving && await db.prepare(`SELECT 1 AS invalid WHERE NOT ${historyGuard}`).bind(value.projectId, current.id).first()) {
+            fail(422, "RESOURCE_PROJECT_MISMATCH", "关联资料必须存在且属于同一项目");
+        }
         const stamp = now(), next = updated(current, value, stamp) as Hypothesis;
-        const statements = [updateStatement("hypotheses", next, current.revision!, `AND ${resourceGuard}`, [JSON.stringify(references), value.projectId])];
-        // Preserve the identity and original recording time of records whose
-        // node is removed. Each dependent write is guarded by the preceding CAS.
-        for (const record of records) {
-            if (previousNodes.has(record.nodeId) && (!incomingIds.has(record.nodeId) || value.nodes.find(node => node.id === record.nodeId)?.title !== previousNodes.get(record.nodeId)!.title) && !record.nodeTitle) {
-                const preserved = updated(record, { ...record, nodeTitle: previousNodes.get(record.nodeId)!.title }, stamp);
-                statements.push(updateStatement("experiments", preserved, record.revision!, "AND changes() = 1"));
-            }
+        const statements = [updateStatement("hypotheses", next, current.revision!,
+            `AND ${resourceGuard}${moving ? ` AND ${historyGuard}` : ""}`,
+            [JSON.stringify(references), value.projectId, ...(moving ? [value.projectId, current.id] : [])])];
+        const titles = current.nodes.filter(node => incomingNodes.get(node.id)?.title !== node.title)
+            .map(node => ({ id: node.id, title: node.title }));
+        if (titles.length) {
+            const titleJson = JSON.stringify(titles);
+            const missingTitle = "kind='experiments' AND parent_id=? AND COALESCE(json_extract(data,'$.nodeTitle'),'')='' AND json_extract(data,'$.nodeId') IN (SELECT json_extract(value,'$.id') FROM json_each(?))";
+            const validRecordedAt = "json_extract(data,'$.recordedAt') GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T*' AND julianday(json_extract(data,'$.recordedAt')) IS NOT NULL";
+            // Freeze inferred recording time before updated_at changes. Existing
+            // timestamps, snapshots, logs and evidence remain untouched.
+            const preservedData = `json_set(
+                CASE WHEN ${validRecordedAt} THEN data ELSE json_set(data,
+                    '$.recordedAt', COALESCE(strftime('%Y-%m-%dT%H:%M:%fZ', ${recordTime}), updated_at),
+                    '$.recordedAtInferred', json('true')) END,
+                '$.id', id, '$.nodeTitle', (SELECT json_extract(title.value,'$.title') FROM json_each(?) title WHERE json_extract(title.value,'$.id')=json_extract(documents.data,'$.nodeId')),
+                '$.revision', revision+1, '$.updatedAt', ?)`;
+            // Reject growth beyond the document budget before changing either
+            // record. All supported experiment mutations also CAS the parent,
+            // so a concurrent change makes the first batch statement fail.
+            const oversized = await db.prepare(`SELECT 1 AS oversized FROM documents WHERE ${missingTitle} AND length(CAST(${preservedData} AS BLOB)) > ? LIMIT 1`)
+                .bind(current.id, titleJson, titleJson, stamp, maxDocumentBytes).first();
+            if (oversized) fail(413, "DOCUMENT_TOO_LARGE", "历史记录补充标题后超过 600 KB，请先减少记录内容");
+            statements.push(db.prepare(`UPDATE documents SET data=${preservedData}, revision=revision+1, updated_at=? WHERE ${missingTitle} AND changes()=1`)
+                .bind(titleJson, stamp, stamp, current.id, titleJson));
         }
         const results = await db.batch(statements);
         await conflict(results[0].meta.changes);
@@ -294,9 +305,10 @@ export function createWorkspaceService(env: Bindings, principal: Principal) {
         await conflict(results[0].meta.changes);
         return { data: record, affectedHypothesis: next };
     }
-    async function removeExperiment(id: string): Promise<ServiceResult> {
+    async function removeExperiment(id: string, expectedRevision: number): Promise<ServiceResult> {
         requireWrite();
         const record = await required("experiments", id) as Experiment;
+        revision(record, expectedRevision);
         const hypothesis = await required("hypotheses", record.hypothesisId) as Hypothesis;
         const next = updated(hypothesis, { ...hypothesis, nodes: hypothesis.nodes.map(node => node.currentResultId === id ? { ...node, ...clearedResult } : node) }) as Hypothesis;
         const results = await db.batch([
@@ -347,10 +359,11 @@ export function createWorkspaceService(env: Bindings, principal: Principal) {
         await conflict(result.meta.changes);
         return { data: item };
     }
-    async function remove(kind: Collection, id: string): Promise<ServiceResult> {
+    async function remove(kind: Collection, id: string, expectedRevision: number): Promise<ServiceResult> {
         requireWrite(); kindCheck(kind);
-        if (kind === "experiments") return removeExperiment(id);
+        if (kind === "experiments") return removeExperiment(id, expectedRevision);
         const current = await required(kind, id);
+        revision(current, expectedRevision);
         if (kind === "projects" && await db.prepare("SELECT id FROM documents WHERE project_id = ? LIMIT 1").bind(id).first()) fail(409, "PROJECT_NOT_EMPTY", "请先删除项目下的研究流程和资料");
         let guard = "", params: unknown[] = [];
         if (kind === "resources") { await checkReferences(id); guard = `AND NOT ${referencedResource}`; params = [id, id]; }

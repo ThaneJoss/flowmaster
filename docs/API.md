@@ -54,12 +54,14 @@
 | --- | --- | --- |
 | `projects_create`、`hypotheses_create`、`resources_create` | `{data}` | write |
 | `projects_update`、`hypotheses_update`、`resources_update` | `{id, data}`，待更新字段及最新 revision | write |
-| `projects_delete`、`hypotheses_delete`、`resources_delete` | `{id}` | write |
+| `projects_delete`、`hypotheses_delete`、`resources_delete` | `{id, revision}`，用户确认时看到的版本 | write |
 | `workspace_seed` | `{}`，只向空库导入示例 | admin |
 
 创建时 ID 可省略，由服务生成。更新支持部分字段，`data.revision` 必需；未提供字段沿用既有值，也兼容旧客户端的完整记录输入。`updatedAt` 和新 revision 由服务维护。合并后的单条文档 JSON 不得超过 600,000 UTF-8 字节，小补丁也受此限制，超限返回 `DOCUMENT_TOO_LARGE` / 413。项目必需 `name`；流程必需 `projectId`、`title`、`status`、`nodes`、`edges`；资料必需 `projectId`、`name`、`type`。具体可选字段见 schema。
 
 资料 `type` 为 `dataset`、`model`、`document`、`code`；`model` 只是类别，不提供模型调用。资料 URL 为空或不含认证信息的 HTTP(S) 地址。步骤 / 记录通过 `resourceIds` 引用同项目资料；`resourceIds` 最多 50 项且不重复。被引用资料不能删除或移动到其他项目。
+
+删除四类业务记录必须携带用户确认时看到的 `revision`，缺少版本会被拒绝，过期版本返回 `REVISION_CONFLICT` / 409；不要在确认后自动重新读取版本并重试删除。流程新增或修正执行记录也会改变流程 revision，旧确认不能级联删除新证据。网页确认框保留该版本，`nodes_delete` 同样使用打开确认框时的流程 revision。旧 `makeClient` 适配器的集合 DELETE 调用需通过 JSON 请求体传 `{revision}`；Token 撤销仍只需 ID。
 
 非空项目不能删除。删除流程会删除其执行记录，响应附带删除记录 ID，供客户端同步清理缓存。删除步骤则保留历史，二者语义不同。
 
@@ -93,7 +95,7 @@ ID 只允许字母、数字、下划线、短横线，不超过 100 字符。步
 | `results_create` | `{hypothesisId, data: {nodeId, title, status, summary, duration?, resourceIds?}}` | write |
 | `experiments_create` | `{data}`，完整执行记录输入 | write |
 | `experiments_update` | `{id, data}`，待更新字段及最新 revision | write |
-| `experiments_delete` | `{id}` | write |
+| `experiments_delete` | `{id, revision}`，用户确认时看到的版本 | write |
 
 `results_create` 与兼容的 `experiments_create` 都要求非空摘要，新结果为 `source: "manual"`，关联实际步骤并设为当前结果。执行记录是结果的事实来源；步骤 `currentResultId` 指向它，`status`、`summary`、`duration` 是同步维护的兼容投影。
 
@@ -101,7 +103,9 @@ ID 只允许字母、数字、下划线、短横线，不超过 100 字符。步
 
 `recordedAt` 由服务生成，表示录入时间；修正不改变它。旧数据缺失或无效时使用首个有效 ISO 日期日志时间，或回退到旧 `updatedAt`，并返回 `recordedAtInferred: true`；新记录为 `false`。修订保留该标记，不把推断时间伪装为实测时间。`nodeTitle` 记录步骤标题快照。既有记录的 `hypothesisId`、`nodeId`、`source`、`recordedAt`、`nodeTitle` 不能被修订改写。新建记录不信任客户端提供的 `recordedAt`；`results_create` 不接受 `startedAt` 或 `recordedAt`。
 
-步骤 `startedAt` 是用户维护的实际开始时间，创建 / 修正 / 删除结果不会以录入时间覆盖它。删除步骤后，其历史记录仍可修正结果内容和资料引用，并通过 `nodeTitle` 说明原归属；不能向已删除步骤创建新记录。
+步骤 `startedAt` 是用户维护的实际开始时间，创建 / 修正 / 删除结果不会以录入时间覆盖它。节点改名或删除时，只在 D1 内补齐缺失的历史标题快照，并冻结推断录入时间；已有标题快照保持原样。历史正文不会为此全量传回 Worker；补快照导致单条文档超过大小限制时，整个步骤修改会被拒绝。流程换项目在数据库内检查历史资料引用。
+
+删除步骤后，其历史记录仍可修正结果内容和资料引用，并通过 `nodeTitle` 说明原归属；不能向已删除步骤创建新记录。
 
 历史 `source: "agent"` 继续可读，不能伪造新建、改成另一来源或设为真实当前结果。没有 `currentResultId` 的旧步骤保留旧摘要；显式 `null` 则代表已清空当前结果。详见 [兼容说明](MIGRATION.md)。
 

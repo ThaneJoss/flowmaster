@@ -184,7 +184,7 @@ function editProject(item) {
     else { const created = await ws.createProject(value); navigateProject(created.id); message("项目已创建，接下来新建一个流程。"); }
   });
 }
-function removeProject(item) { const target = clone(item); confirmAction("删除项目", `将删除“${target.name}”。若项目仍有流程或资料，请先处理这些内容。`, async () => { await ws.deleteProject(target.id); if (route.value.projectId === target.id) go("projects"); message("项目已删除"); }); }
+function removeProject(item) { const target = clone(item); confirmAction("删除项目", `将删除“${target.name}”。若项目仍有流程或资料，请先处理这些内容。`, async () => { await ws.deleteProject(target.id, target.revision); if (route.value.projectId === target.id) go("projects"); message("项目已删除"); }); }
 function editFlow(item) {
   const original = item ? clone(item) : null, projectId = currentProject.value.id;
   form(original ? "编辑流程" : "新建流程", [field("title", "流程名称"), field("description", "流程目标 / 说明", "textarea"), field("baseline", "基线（可选）")], original || { title: "", description: "", baseline: "" }, async value => {
@@ -194,7 +194,7 @@ function editFlow(item) {
     message(original ? "流程已保存" : "流程已创建，接下来添加一个步骤。");
   });
 }
-function removeFlow(item) { const target = clone(item); confirmAction("删除流程", `“${target.title}”的步骤和关联执行记录都会删除，无法从页面恢复。`, async () => { await ws.deleteHypothesis(target.id); if (route.value.hypothesisId === target.id) navigateProject(target.projectId); message("流程已删除"); }); }
+function removeFlow(item) { const target = clone(item); confirmAction("删除流程", `“${target.title}”的步骤和关联执行记录都会删除，无法从页面恢复。`, async () => { await ws.deleteHypothesis(target.id, target.revision); if (route.value.hypothesisId === target.id) navigateProject(target.projectId); message("流程已删除"); }); }
 /** @param {{ width?: number }} options */
 function addNode({ width } = {}) {
   const flow = current.value;
@@ -228,7 +228,7 @@ function saveNode() {
   if (nodeConflicted.value) confirmAction("确认保存冲突字段", "服务端也修改了草稿中的字段。确认后使用当前草稿；取消可继续核对。", commit);
   else perform(commit);
 }
-function removeNode() { const flow = current.value, node = selectedNode.value; if (!flow || !node) return; confirmAction("删除步骤", `删除“${node.title}”及相关依赖，保留历史执行记录。`, async () => { await ws.deleteNode(flow.id, node.id); if (route.value.nodeId === node.id) navigateProject(flow.projectId, "flows", flow.id); message("步骤已删除，执行历史仍然保留。"); }); }
+function removeNode() { const flow = current.value ? clone(current.value) : null, node = selectedNode.value ? clone(selectedNode.value) : null; if (!flow || !node) return; confirmAction("删除步骤", `删除“${node.title}”及相关依赖，保留历史执行记录。`, async () => { await ws.deleteNode(flow.id, node.id, flow.revision); if (route.value.nodeId === node.id) navigateProject(flow.projectId, "flows", flow.id); message("步骤已删除，执行历史仍然保留。"); }); }
 function moveNode(position) { const flow = current.value; if (flow) perform(() => ws.moveNode(flow.id, position.id, { x: position.x, y: position.y })); }
 function layout({ width, complete }) { const flow = current.value; if (flow) perform(async () => { await ws.layout(flow.id, layoutNodes(flow.nodes, flow.edges, width).map(({ id, x, y }) => ({ id, x, y }))); await complete?.(); }); }
 
@@ -242,7 +242,7 @@ function recordForm(record = null) {
   } };
   if (original?.resourceIds?.length) perform(() => hydrateResources(original.resourceIds));
 }
-function removeRecord(record) { const target = clone(record); confirmAction("删除执行记录", `删除“${target.title}”。若它是当前结果，步骤会清空当前结果；不会自动改用其他历史记录。`, async () => { await ws.deleteResult(target.id); message("执行记录已删除"); }); }
+function removeRecord(record) { const target = clone(record); confirmAction("删除执行记录", `删除“${target.title}”。若它是当前结果，步骤会清空当前结果；不会自动改用其他历史记录。`, async () => { await ws.deleteResult(target.id, target.revision); message("执行记录已删除"); }); }
 function showRecord(record) { modal.value = { kind: "record-detail", title: record.title, record: clone(record) }; if (record.resourceIds?.length) perform(() => hydrateResources(record.resourceIds)); }
 function jumpToRecord(record) { perform(async () => {
   let flow;
@@ -265,7 +265,7 @@ function editResource(item) {
     message("资料已保存，可在步骤或执行记录中关联。");
   });
 }
-function removeResource(item) { const target = clone(item); confirmAction("删除资料", `删除“${target.name}”。已被步骤或执行记录引用的资料需要先解除关联。`, async () => { await ws.deleteResource(target.id); message("资料已删除"); }); }
+function removeResource(item) { const target = clone(item); confirmAction("删除资料", `删除“${target.name}”。已被步骤或执行记录引用的资料需要先解除关联。`, async () => { await ws.deleteResource(target.id, target.revision); message("资料已删除"); }); }
 function createToken() {
   form("创建访问 Token", [field("name", "名称"), field("scope", "权限", "select", [{ value: "read", label: "只读" }, { value: "write", label: "读写" }, { value: "admin", label: "管理员" }]), field("expiresInDays", "有效天数（1–365）", "number")], { name: "", scope: "read", expiresInDays: 30 }, async value => {
     const created = await ws.createToken({ ...value, expiresInDays: Number(value.expiresInDays) });

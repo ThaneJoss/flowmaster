@@ -149,9 +149,58 @@ test('late entity reads cannot replace newer revisions or resurrect deleted cach
     ] as const) {
         pending = delay(name);
         const reading = read(id); await pending.entered.promise;
-        await remove(id);
+        await remove(id, cache.value.find(item => item.id === id)!.revision!);
         pending.reply.resolve(normal(name));
         await assert.rejects(reading, { name: 'AbortError' });
         assert.equal(cache.value.some(item => item.id === id), false);
     }
+});
+
+test('delete confirmations retain their revision after refresh and conflicts never evict newer data or retry', async t => {
+    let latestRevision = 1;
+    const deletes: { name: string; args: Record<string, unknown> }[] = [];
+    const ws = setup(t, (name, args) => {
+        if (name.endsWith('_delete')) {
+            deletes.push({ name, args });
+            return { error: { code: 'REVISION_CONFLICT', message: 'Changed since confirmation' }, status: 409 };
+        }
+        const reply = normal(name);
+        return { ...reply, data: Array.isArray(reply.data)
+            ? reply.data.map(item => ({ ...item, revision: latestRevision }))
+            : { ...reply.data as object, revision: latestRevision } };
+    });
+    await connect(ws); await ws.selectProject('p1'); await ws.loadRecords(); await ws.loadNodeHistory('h1', 'n1');
+    const confirmedProject = { ...ws.allProjects.value[0] };
+    const confirmedFlow = { ...ws.allHypotheses.value[0] };
+    const confirmedResource = { ...ws.allResources.value[0] };
+    const confirmedRecord = { ...ws.records.value[0] };
+    latestRevision = 2;
+    await ws.refresh();
+    assert.equal(ws.allProjects.value[0].revision, 2);
+    assert.equal(ws.allHypotheses.value[0].revision, 2);
+    assert.equal(ws.allResources.value[0].revision, 2);
+    assert.equal(ws.records.value[0].revision, 2);
+    for (const remove of [
+        () => ws.deleteProject(confirmedProject.id, confirmedProject.revision!),
+        () => ws.deleteHypothesis(confirmedFlow.id, confirmedFlow.revision!),
+        () => ws.deleteResource(confirmedResource.id, confirmedResource.revision!),
+        () => ws.deleteResult(confirmedRecord.id, confirmedRecord.revision!),
+        () => ws.deleteNode(confirmedFlow.id, 'n1', confirmedFlow.revision!),
+    ]) {
+        await assert.rejects(remove(), { code: 'REVISION_CONFLICT', status: 409 });
+        assert.equal(ws.pending.size, 0);
+    }
+    assert.deepEqual(deletes, [
+        { name: 'projects_delete', args: { id: 'p1', revision: 1 } },
+        { name: 'hypotheses_delete', args: { id: 'h1', revision: 1 } },
+        { name: 'resources_delete', args: { id: 'r1', revision: 1 } },
+        { name: 'experiments_delete', args: { id: 'e1', revision: 1 } },
+        { name: 'nodes_delete', args: { hypothesisId: 'h1', revision: 1, nodeId: 'n1' } },
+    ]);
+    for (const items of [ws.allProjects, ws.allHypotheses, ws.allResources, ws.records, ws.nodeHistory]) {
+        assert.equal(items.value.length, 1);
+        assert.equal(items.value[0].revision, 2);
+    }
+    assert.equal(ws.allHypotheses.value[0].nodes[0].id, 'n1');
+    assert.equal(ws.resultCache.get('e1')!.revision, 2);
 });

@@ -46,7 +46,7 @@ test('MCP persists research and enforces access, revisions and data integrity', 
         assert.equal((await call('hypotheses_get', { id: hypothesis.id })).data.nodes.length, 2);
         assert.equal((await call('hypotheses_create', { data: { ...data, edges: [...data.edges, { source: 'b', target: 'a' }] } })).status, 422);
         assert.equal((await call('hypotheses_create', { data: { ...data, projectId: 'missing' } })).status, 404);
-        assert.equal((await call('projects_delete', { id: project.id })).status, 409);
+        assert.equal((await call('projects_delete', { id: project.id, revision: project.revision })).status, 409);
         assert.equal((await call('resources_create', { data: { projectId: project.id, name: 'unsafe', type: 'document', url: 'javascript:alert(1)' } })).status, 422);
     });
     await t.test('rejects stale revisions without overwriting saved changes', async () => {
@@ -90,7 +90,7 @@ test('MCP persists research and enforces access, revisions and data integrity', 
         hypothesis = corrected.payload.affectedHypothesis;
         assert.equal(corrected.data.recordedAt, first.recordedAt);
         assert.equal(hypothesis.nodes[0].summary, 'Did not reproduce', 'correcting history must not select it');
-        assert.equal((await call('resources_delete', { id: resource.id })).status, 409);
+        assert.equal((await call('resources_delete', { id: resource.id, revision: resource.revision })).status, 409);
         hypothesis = (await call('nodes_select_result', { hypothesisId: hypothesis.id, revision: hypothesis.revision, nodeId: 'a', resultId: first.id })).data;
         assert.equal(hypothesis.nodes[0].summary, 'Corrected measurement');
         assert.equal(hypothesis.nodes[0].progress, 'in_progress');
@@ -99,7 +99,7 @@ test('MCP persists research and enforces access, revisions and data integrity', 
         const latest = await call('experiments_update', { id: first.id, data: { revision: corrected.data.revision, summary: 'Final correction' } });
         assert.equal(latest.payload.affectedHypothesis.nodes[0].summary, 'Final correction');
         assert.equal(latest.data.recordedAt, first.recordedAt);
-        const removed = await call('experiments_delete', { id: first.id });
+        const removed = await call('experiments_delete', { id: first.id, revision: latest.data.revision });
         hypothesis = removed.payload.affectedHypothesis;
         assert.equal(hypothesis.nodes[0].currentResultId, null, 'deletion never silently promotes another historical result');
         assert.equal(hypothesis.nodes[0].status, 'pending');
@@ -110,7 +110,34 @@ test('MCP persists research and enforces access, revisions and data integrity', 
         assert.equal((await call('experiments_update', { id: second.data.id, data: { revision: second.data.revision, resourceIds: [] } })).status, 200);
         hypothesis = (await call('hypotheses_get', { id: hypothesis.id })).data;
         hypothesis = (await call('nodes_update', { hypothesisId: hypothesis.id, revision: hypothesis.revision, nodeId: 'a', patch: { resourceIds: [] } })).data;
-        assert.equal((await call('resources_delete', { id: resource.id })).status, 200);
+        assert.equal((await call('resources_delete', { id: resource.id, revision: resource.revision })).status, 200);
+    });
+    await t.test('deletes reject missing or stale reviewed revisions without removing newer evidence', async () => {
+        const p = (await call('projects_create', { data: { name: 'Reviewed project' } })).data;
+        const p2 = (await call('projects_update', { id: p.id, data: { revision: p.revision, name: 'New project name' } })).data;
+        assert.equal((await call('projects_delete', { id: p.id })).status, 422);
+        assert.equal((await call('projects_delete', { id: p.id, revision: p.revision })).status, 409);
+        assert.equal((await call('projects_get', { id: p.id })).data.name, p2.name);
+        const resource = (await call('resources_create', { data: { projectId: p.id, name: 'Reviewed resource', type: 'document' } })).data;
+        const resource2 = (await call('resources_update', { id: resource.id, data: { revision: resource.revision, name: 'Updated resource' } })).data;
+        assert.equal((await call('resources_delete', { id: resource.id, revision: resource.revision })).status, 409);
+        assert.equal((await call('resources_get', { id: resource.id })).data.name, resource2.name);
+        const flow = (await call('hypotheses_create', { data: { projectId: p.id, title: 'Reviewed flow', status: 'pending', nodes: [emptyNode('reviewed-step')], edges: [] } })).data;
+        const result = await call('results_create', { hypothesisId: flow.id, data: { nodeId: 'reviewed-step', title: 'New evidence', status: 'verified', summary: 'Created after delete confirmation opened' } });
+        assert.equal((await call('hypotheses_delete', { id: flow.id, revision: flow.revision })).status, 409);
+        assert.equal((await call('nodes_delete', { hypothesisId: flow.id, revision: flow.revision, nodeId: 'reviewed-step' })).status, 409);
+        assert.equal((await call('experiments_get', { id: result.data.id })).status, 200);
+        assert.equal((await call('hypotheses_get', { id: flow.id })).data.nodes.length, 1);
+        const correction = await call('experiments_update', { id: result.data.id, data: { revision: result.data.revision, summary: 'Corrected after confirmation opened' } });
+        assert.equal((await call('experiments_delete', { id: result.data.id })).status, 422);
+        assert.equal((await call('experiments_delete', { id: result.data.id, revision: result.data.revision })).status, 409);
+        assert.equal((await call('experiments_get', { id: result.data.id })).data.summary, correction.data.summary);
+        const removed = await call('experiments_delete', { id: result.data.id, revision: correction.data.revision });
+        assert.equal(removed.status, 200);
+        assert.equal(removed.payload.affectedHypothesis.nodes[0].currentResultId, null);
+        assert.equal((await call('hypotheses_delete', { id: flow.id, revision: removed.payload.affectedHypothesis.revision })).status, 200);
+        assert.equal((await call('resources_delete', { id: resource.id, revision: resource2.revision })).status, 200);
+        assert.equal((await call('projects_delete', { id: p.id, revision: p2.revision })).status, 200);
     });
     await t.test('revoked and expired tokens immediately lose access', async () => {
         assert.equal((await call('tokens_revoke', { id: writerId })).status, 200);
@@ -120,9 +147,9 @@ test('MCP persists research and enforces access, revisions and data integrity', 
     });
     await t.test('deleting a hypothesis cascades its experiments and permits project deletion', async () => {
         assert.equal((await call('experiments_list', { hypothesisId: hypothesis.id })).payload.total, 1);
-        assert.equal((await call('hypotheses_delete', { id: hypothesis.id })).status, 200);
+        assert.equal((await call('hypotheses_delete', { id: hypothesis.id, revision: hypothesis.revision })).status, 200);
         assert.equal((await call('experiments_list', { hypothesisId: hypothesis.id })).payload.total, 0);
-        assert.equal((await call('projects_delete', { id: project.id })).status, 200);
+        assert.equal((await call('projects_delete', { id: project.id, revision: project.revision })).status, 200);
         assert.equal((await call('projects_get', { id: project.id })).status, 404);
     });
 });
