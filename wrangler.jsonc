@@ -6,8 +6,8 @@
   "compatibility_date": "2026-05-15",
   "routes": [
     {
-      "pattern": "flow.thanejoss.com",
-      "custom_domain": true
+      "pattern": "flow.thanejoss.com/*",
+      "zone_name": "thanejoss.com"
     }
   ],
   "compatibility_flags": [
@@ -40,3 +40,4 @@
     "enabled": true
   }
 }
+

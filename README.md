@@ -123,6 +123,8 @@ node tests/canvas-smoke.mjs
 
 前端位于 `web/`，构建输出为 `dist/client/`；Worker 入口为 `worker/index.ts`。账号、域名、D1 和静态资源配置统一在 [wrangler.jsonc](wrangler.jsonc)。
 
+生产入口通过 `flow.thanejoss.com/*` 普通 Worker Route（zone `thanejoss.com`）映射到 `flowmaster`。沿用现有 CNAME → `cloudflare-ip.thanejoss.com` 及其代理状态；Wrangler 不创建同名 Custom Domain 或接管 DNS。发布后通过现有域名核对 HTTPS、页面与 `/mcp`。
+
 自行部署到 Cloudflare 时，先配置账号、域名和 D1 数据库 ID，绑定以下资源：
 
 | 配置 | 要求 |
@@ -155,3 +157,4 @@ node tests/canvas-smoke.mjs
 - [部署排查](docs/DEPLOYMENT.md)：Cloudflare 生产、分支预览和诊断边界。
 - [可靠性审查](docs/RELIABILITY.md)：已修正的配置缺口与待处理的数据规模风险。
 - [验证记录](docs/VALIDATION.json)：已记录的检查范围与尚未验证的事项。
+
