@@ -83,7 +83,7 @@ await page.route("**/mcp",async route=>{
   if(data[kind]&&action==="get"){const item=data[kind].find(item=>item.id===args.id);assert.ok(item);return reply(item);}
   if(data[kind]&&action==="create"){const item={...args.data,id:`created-${kind}-${data[kind].length}`,revision:1};data[kind].push(item);return reply(item);}
   if(data[kind]&&action==="update"){const index=data[kind].findIndex(item=>item.id===args.id);assert.ok(index!==-1);const item={...data[kind][index],...args.data,id:args.id,revision:data[kind][index].revision+1};data[kind][index]=item;return reply(item);}
-  if(data[kind]&&action==="delete"){data[kind]=data[kind].filter(item=>item.id!==args.id);return reply({deleted:true,id:args.id});}
+  if(data[kind]&&action==="delete"){const current=data[kind].find(item=>item.id===args.id);assert.ok(current);assert.ok(Number.isSafeInteger(args.revision));if(args.revision!==current.revision)return failure("Fixture revision conflict",409);data[kind]=data[kind].filter(item=>item.id!==args.id);return reply({deleted:true,id:args.id});}
   throw new Error("Unexpected mocked MCP tool: "+name);
 });
 const navigation=page.getByRole("navigation",{name:"主导航",exact:true});

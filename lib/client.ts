@@ -84,7 +84,11 @@ function toolFor(path: string, options: RequestInit): ToolCall {
         }
         if (method === "POST" && !id) return { name: `${name}_create`, arguments: { data: data() } };
         if (method === "PUT" && id) return { name: `${name}_update`, arguments: { id, data: data() } };
-        if (method === "DELETE" && id) return { name: `${name}_delete`, arguments: { id } };
+        if (method === "DELETE" && id) {
+            const body = data();
+            if (!isRecord(body) || !Number.isSafeInteger(body.revision) || Number(body.revision) < 1) throw new Error("删除操作需要有效的 revision");
+            return { name: `${name}_delete`, arguments: { id, revision: body.revision } };
+        }
     }
     throw new Error("不支持的 MCP 操作");
 }

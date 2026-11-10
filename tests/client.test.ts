@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { makeClient, type Connection } from '../lib/client.ts';
+import { makeWorkspaceClient } from '../lib/workspace-client.ts';
 
 const connection: Connection = { baseUrl: 'https://flowmaster.example', token: 'test-only-token', remember: false };
 function deferred<T>() {
@@ -242,4 +243,38 @@ test('all client APIs keep credentials at the configured endpoint and reject mal
         malformed = shape;
         await assert.rejects(api('/projects'), /无效的 MCP 响应/);
     }
+});
+
+test('collection deletes forward the confirmed revision through both clients and preserve token revocation', async (t) => {
+    const calls: RpcRequest['params'][] = [];
+    t.mock.method(globalThis, 'fetch', async (url: unknown, options: RequestInit) => {
+        const request = requestFor(url, options), initialized = handshake(request);
+        if (initialized) return initialized;
+        calls.push(request.params);
+        return Response.json(toolResult(request, { deleted: true, id: request.params.arguments!.id }));
+    });
+    const api = makeClient(connection), workspace = makeWorkspaceClient(connection);
+    for (const kind of ['projects', 'hypotheses', 'resources', 'experiments'] as const) {
+        await api.mutation(`/${kind}/confirmed%20record`, { method: 'DELETE', body: JSON.stringify({ revision: 7 }) });
+        await workspace[kind].delete('confirmed record', 7);
+        assert.deepEqual(calls.slice(-2), [
+            { name: `${kind}_delete`, arguments: { id: 'confirmed record', revision: 7 } },
+            { name: `${kind}_delete`, arguments: { id: 'confirmed record', revision: 7 } },
+        ]);
+    }
+    const count = calls.length;
+    for (const body of [undefined, '{}', 'null', '[]', '{"revision":0}', '{"revision":-1}', '{"revision":1.5}', '{"revision":"7"}']) {
+        await assert.rejects(api('/projects/p1', { method: 'DELETE', body }), /JSON 请求体|有效的 revision/);
+    }
+    assert.equal(calls.length, count, 'invalid compatibility deletes must not reach the server');
+    const controller = new AbortController();
+    controller.abort();
+    await assert.rejects(workspace.projects.delete('p1', 7, { signal: controller.signal }), { name: 'AbortError' });
+    assert.equal(calls.length, count, 'the third argument must still cancel typed deletes');
+    await api('/tokens/t1', { method: 'DELETE' });
+    await workspace.tokens.revoke('t1');
+    assert.deepEqual(calls.slice(-2), [
+        { name: 'tokens_revoke', arguments: { id: 't1' } },
+        { name: 'tokens_revoke', arguments: { id: 't1' } },
+    ]);
 });

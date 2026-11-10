@@ -62,10 +62,6 @@ export function createWorkspaceService(env: Bindings, principal: Principal) {
         const item = await rawGet(kind, id);
         return item || fail(404, "NOT_FOUND", "记录不存在");
     }
-    async function children(hypothesisId: string): Promise<Experiment[]> {
-        const rows = await db.prepare("SELECT id,kind,data,revision,updated_at FROM documents WHERE kind = 'experiments' AND parent_id = ? ORDER BY updated_at DESC,id").bind(hypothesisId).all<Row>();
-        return rows.results.map(unpack) as Experiment[];
-    }
     async function withSnapshots(items: Document[], hypotheses?: Hypothesis[]): Promise<Document[]> {
         const ids = [...new Set(items.filter(item => !item.nodeTitle).map(item => item.hypothesisId))];
         let available = hypotheses;
@@ -194,7 +190,7 @@ export function createWorkspaceService(env: Bindings, principal: Principal) {
         return { data: kind === "experiments" ? (await withSnapshots([data]))[0] : data };
     }
     async function saveHypothesis(current: Hypothesis, input: unknown, allowSelection = false): Promise<ServiceResult<Hypothesis>> {
-        const raw = parse(z.record(z.unknown()), input);
+        const raw = parse(z.record(z.string(), z.unknown()), input);
         revision(current, raw.revision);
         const value = parse(schemas.hypotheses, { ...current, ...raw });
         if (value.id && value.id !== current.id) fail(422, "ID_MISMATCH", "请求中的 ID 与记录不一致");
@@ -218,30 +214,66 @@ export function createWorkspaceService(env: Bindings, principal: Principal) {
             }
             return next;
         });
-        const incomingIds = new Set(value.nodes.map(node => node.id));
-        const changedNodeIds = [...new Set([
-            ...current.nodes.filter(node => !incomingIds.has(node.id)).map(node => node.id),
-            ...value.nodes.filter(node => !previousNodes.has(node.id) || previousNodes.get(node.id)!.title !== node.title).map(node => node.id),
-        ])];
-        let records: Experiment[] = [];
-        if (value.projectId !== current.projectId) records = await children(current.id);
-        else if (changedNodeIds.length) {
-            const rows = await db.prepare("SELECT id,kind,data,revision,updated_at FROM documents WHERE kind='experiments' AND parent_id=? AND json_extract(data,'$.nodeId') IN (SELECT value FROM json_each(?))").bind(current.id, JSON.stringify(changedNodeIds)).all<Row>();
-            records = rows.results.map(unpack) as Experiment[];
+        const incomingNodes = new Map(value.nodes.map(node => [node.id, node]));
+        const addedIds = value.nodes.filter(node => !previousNodes.has(node.id)).map(node => node.id);
+        if (addedIds.length && await db.prepare("SELECT 1 AS used FROM documents WHERE kind='experiments' AND parent_id=? AND json_extract(data,'$.nodeId') IN (SELECT value FROM json_each(?)) LIMIT 1").bind(current.id, JSON.stringify(addedIds)).first()) {
+            fail(409, "NODE_ID_REUSED", "该节点 ID 已用于历史实验，请使用新的节点 ID");
         }
-        for (const node of value.nodes) {
-            if (!previousNodes.has(node.id) && records.some(record => record.nodeId === node.id)) fail(409, "NODE_ID_REUSED", "该节点 ID 已用于历史实验，请使用新的节点 ID");
-        }
-        const references = [...new Set([...value.nodes.flatMap(resourceIds), ...records.flatMap(resourceIds)])];
+        const references = hypothesisResources(value as Hypothesis);
         await checkResources(references, value.projectId);
+        // Historical evidence stays in D1. Only the existence of an invalid
+        // reference crosses the binding; the same guard protects the write.
+        const historyGuard = "NOT EXISTS (SELECT 1 FROM documents e, json_each(e.data, '$.resourceIds') ref LEFT JOIN documents r ON r.id=ref.value AND r.kind='resources' AND r.project_id=? WHERE e.kind='experiments' AND e.parent_id=? AND r.id IS NULL)";
+        const moving = value.projectId !== current.projectId;
+        if (moving && await db.prepare(`SELECT 1 AS invalid WHERE NOT ${historyGuard}`).bind(value.projectId, current.id).first()) {
+            fail(422, "RESOURCE_PROJECT_MISMATCH", "关联资料必须存在且属于同一项目");
+        }
         const stamp = now(), next = updated(current, value, stamp) as Hypothesis;
-        const statements = [updateStatement("hypotheses", next, current.revision!, `AND ${resourceGuard}`, [JSON.stringify(references), value.projectId])];
-        // Preserve the identity and original recording time of records whose
-        // node is removed. Each dependent write is guarded by the preceding CAS.
-        for (const record of records) {
-            if (previousNodes.has(record.nodeId) && (!incomingIds.has(record.nodeId) || value.nodes.find(node => node.id === record.nodeId)?.title !== previousNodes.get(record.nodeId)!.title) && !record.nodeTitle) {
-                const preserved = updated(record, { ...record, nodeTitle: previousNodes.get(record.nodeId)!.title }, stamp);
-                statements.push(updateStatement("experiments", preserved, record.revision!, "AND changes() = 1"));
+        const statements = [updateStatement("hypotheses", next, current.revision!,
+            `AND ${resourceGuard}${moving ? ` AND ${historyGuard}` : ""}`,
+            [JSON.stringify(references), value.projectId, ...(moving ? [value.projectId, current.id] : [])])];
+        const titles = current.nodes.filter(node => incomingNodes.get(node.id)?.title !== node.title)
+            .map(node => ({ id: node.id, title: node.title }));
+        if (titles.length) {
+            const titleJson = JSON.stringify(titles), byId = new Map(titles.map(node => [node.id, node.title]));
+            const missingTitle = "kind='experiments' AND parent_id=? AND COALESCE(json_extract(data,'$.nodeTitle'),'')='' AND json_extract(data,'$.nodeId') IN (SELECT json_extract(value,'$.id') FROM json_each(?))";
+            // Fetch only bounded pages of metadata for records missing snapshots.
+            // Use the same JavaScript date parser as unpack: SQLite accepts a
+            // different set of legacy timestamps (for example +0800 offsets).
+            let afterId = "", precedingChanges = 1;
+            for (;;) {
+                const page = await db.prepare(`SELECT id,revision,updated_at,
+                    json_extract(data,'$.nodeId') AS node_id,
+                    json_extract(data,'$.recordedAt') AS recorded_at,
+                    (SELECT json_group_array(time) FROM (
+                        SELECT json_extract(log.value,'$.time') AS time
+                        FROM json_each(documents.data,'$.logs') log ORDER BY CAST(log.key AS INTEGER)
+                    )) AS log_times
+                    FROM documents WHERE ${missingTitle} AND id > ? ORDER BY id LIMIT 25`)
+                    .bind(current.id, titleJson, afterId).all<{ id: string; revision: number; updated_at: string; node_id: string; recorded_at: unknown; log_times: string }>();
+                if (!page.results.length) break;
+                const patches = page.results.map(record => {
+                    const patch: Document = { id: record.id, nodeTitle: byId.get(record.node_id)!, revision: record.revision + 1, updatedAt: stamp };
+                    if (!validTime(record.recorded_at)) {
+                        const first = (JSON.parse(record.log_times) as unknown[]).find(validTime);
+                        patch.recordedAt = first ? new Date(first).toISOString() : record.updated_at;
+                        patch.recordedAtInferred = true;
+                    }
+                    return patch;
+                });
+                const patchJson = JSON.stringify(patches);
+                // Merge small patches inside D1. Historical log messages and
+                // evidence never cross the binding. Validate growth before writes.
+                const oversized = await db.prepare("SELECT 1 AS oversized FROM documents d JOIN json_each(?) patch ON d.id=json_extract(patch.value,'$.id') WHERE d.kind='experiments' AND d.parent_id=? AND length(CAST(json_patch(d.data,patch.value) AS BLOB)) > ? LIMIT 1")
+                    .bind(patchJson, current.id, maxDocumentBytes).first();
+                if (oversized) fail(413, "DOCUMENT_TOO_LARGE", "历史记录补充标题后超过 600 KB，请先减少记录内容");
+                // Supported experiment mutations CAS the parent. After its CAS,
+                // each nonempty page must update every row before the next can run.
+                statements.push(db.prepare("UPDATE documents SET data=json_patch(data,(SELECT patch.value FROM json_each(?) patch WHERE json_extract(patch.value,'$.id')=documents.id)), revision=revision+1, updated_at=? WHERE kind='experiments' AND parent_id=? AND id IN (SELECT json_extract(value,'$.id') FROM json_each(?)) AND changes()=?")
+                    .bind(patchJson, stamp, current.id, patchJson, precedingChanges));
+                precedingChanges = page.results.length;
+                afterId = page.results.at(-1)!.id;
+                if (page.results.length < 25) break;
             }
         }
         const results = await db.batch(statements);
@@ -271,7 +303,7 @@ export function createWorkspaceService(env: Bindings, principal: Principal) {
     async function updateExperiment(id: string, input: unknown): Promise<ServiceResult<Experiment>> {
         requireWrite();
         const current = await required("experiments", id) as Experiment;
-        const raw = parse(z.record(z.unknown()), input);
+        const raw = parse(z.record(z.string(), z.unknown()), input);
         revision(current, raw.revision);
         for (const key of ["hypothesisId", "nodeId", "source"] as const) {
             if (raw[key] !== undefined && raw[key] !== current[key]) fail(422, "IMMUTABLE_RELATION", "实验的研究流程、节点和来源不能修改");
@@ -294,9 +326,10 @@ export function createWorkspaceService(env: Bindings, principal: Principal) {
         await conflict(results[0].meta.changes);
         return { data: record, affectedHypothesis: next };
     }
-    async function removeExperiment(id: string): Promise<ServiceResult> {
+    async function removeExperiment(id: string, expectedRevision: number): Promise<ServiceResult> {
         requireWrite();
         const record = await required("experiments", id) as Experiment;
+        revision(record, expectedRevision);
         const hypothesis = await required("hypotheses", record.hypothesisId) as Hypothesis;
         const next = updated(hypothesis, { ...hypothesis, nodes: hypothesis.nodes.map(node => node.currentResultId === id ? { ...node, ...clearedResult } : node) }) as Hypothesis;
         const results = await db.batch([
@@ -329,7 +362,7 @@ export function createWorkspaceService(env: Bindings, principal: Principal) {
         if (kind === "experiments") return updateExperiment(id, input);
         const current = await required(kind, id);
         if (kind === "hypotheses") return saveHypothesis(current as Hypothesis, input);
-        const raw = parse(z.record(z.unknown()), input);
+        const raw = parse(z.record(z.string(), z.unknown()), input);
         revision(current, raw.revision);
         const value = parse(schemas[kind], { ...current, ...raw }) as Document;
         if (value.id && value.id !== id) fail(422, "ID_MISMATCH", "请求中的 ID 与记录不一致");
@@ -347,10 +380,11 @@ export function createWorkspaceService(env: Bindings, principal: Principal) {
         await conflict(result.meta.changes);
         return { data: item };
     }
-    async function remove(kind: Collection, id: string): Promise<ServiceResult> {
+    async function remove(kind: Collection, id: string, expectedRevision: number): Promise<ServiceResult> {
         requireWrite(); kindCheck(kind);
-        if (kind === "experiments") return removeExperiment(id);
+        if (kind === "experiments") return removeExperiment(id, expectedRevision);
         const current = await required(kind, id);
+        revision(current, expectedRevision);
         if (kind === "projects" && await db.prepare("SELECT id FROM documents WHERE project_id = ? LIMIT 1").bind(id).first()) fail(409, "PROJECT_NOT_EMPTY", "请先删除项目下的研究流程和资料");
         let guard = "", params: unknown[] = [];
         if (kind === "resources") { await checkReferences(id); guard = `AND NOT ${referencedResource}`; params = [id, id]; }
